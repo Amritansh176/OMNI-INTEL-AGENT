@@ -1,0 +1,23 @@
+{
+    "job_id": "manual_d4df8d8f",
+    "pipeline": "manual_run",
+    "target": "drones",
+    "data": {
+        "leads": [
+            {
+                "name": "Pentagon",
+                "organization": "US Military",
+                "designation": "Agency",
+                "contact": null,
+                "status": null
+            },
+            {
+                "name": null,
+                "organization": null,
+                "designation": null,
+                "contact": null,
+                "status": "Competing for $150M in delivery orders"
+            }
+        ]
+    }
+}

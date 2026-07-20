@@ -24,6 +24,8 @@ html = """
             .header-flex { display: flex; justify-content: space-between; align-items: center; }
             .btn { padding: 10px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
             .btn:hover { background: #218838; }
+            .btn-danger { background: #dc3545; }
+            .btn-danger:hover { background: #c82333; }
             table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
             th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
             th { background-color: #007bff; color: white; }
@@ -89,7 +91,12 @@ html = """
                     </form>
                 </div>
                 
-                <div id="loadingMsg" style="display:none; color:#007bff; margin-top:15px; text-align: center; font-weight: bold;">Processing with AI...</div>
+                <div id="loadingContainer" style="display:none; margin-top:15px; text-align: center;">
+                    <div style="color:#007bff; font-weight: bold; margin-bottom: 10px;">
+                        Processing with AI... <span id="timerSpan">0s</span>
+                    </div>
+                    <button class="btn btn-danger" onclick="cancelProcessing()">Cancel</button>
+                </div>
             </div>
         </div>
 
@@ -124,36 +131,87 @@ html = """
                 if (event.target == document.getElementById('startModal')) closeModal();
             }
 
+            let currentController = null;
+            let timerInterval = null;
+            let timerSeconds = 0;
+
+            function startTimer() {
+                timerSeconds = 0;
+                document.getElementById('timerSpan').innerText = "0s";
+                document.getElementById('loadingContainer').style.display = 'block';
+                document.querySelectorAll('form button[type="submit"]').forEach(b => b.disabled = true);
+                timerInterval = setInterval(() => {
+                    timerSeconds++;
+                    document.getElementById('timerSpan').innerText = timerSeconds + "s";
+                }, 1000);
+            }
+
+            function stopTimer() {
+                if (timerInterval) clearInterval(timerInterval);
+                document.getElementById('loadingContainer').style.display = 'none';
+                document.querySelectorAll('form button[type="submit"]').forEach(b => b.disabled = false);
+            }
+
+            function cancelProcessing() {
+                if (currentController) {
+                    currentController.abort();
+                    currentController = null;
+                }
+                stopTimer();
+            }
+
             async function submitPrompt(e) {
                 e.preventDefault();
                 const prompt = document.getElementById('promptInput').value;
-                document.getElementById('loadingMsg').style.display = 'block';
+                
+                currentController = new AbortController();
+                startTimer();
+                
                 const formData = new FormData();
                 formData.append('prompt', prompt);
                 try {
-                    await fetch('/api/start_job/prompt', { method: 'POST', body: formData });
+                    await fetch('/api/start_job/prompt', { 
+                        method: 'POST', 
+                        body: formData,
+                        signal: currentController.signal 
+                    });
                     document.getElementById('promptInput').value = '';
+                    closeModal();
                 } catch (err) {
-                    alert("Error submitting job.");
+                    if (err.name === 'AbortError') {
+                        console.log("Request cancelled by user");
+                    } else {
+                        alert("Error submitting job.");
+                    }
                 }
-                document.getElementById('loadingMsg').style.display = 'none';
-                closeModal();
+                stopTimer();
             }
 
             async function submitCsv(e) {
                 e.preventDefault();
                 const file = document.getElementById('csvFile').files[0];
-                document.getElementById('loadingMsg').style.display = 'block';
+                
+                currentController = new AbortController();
+                startTimer();
+                
                 const formData = new FormData();
                 formData.append('file', file);
                 try {
-                    await fetch('/api/start_job/csv', { method: 'POST', body: formData });
+                    await fetch('/api/start_job/csv', { 
+                        method: 'POST', 
+                        body: formData,
+                        signal: currentController.signal
+                    });
                     document.getElementById('csvFile').value = '';
+                    closeModal();
                 } catch (err) {
-                    alert("Error uploading CSV.");
+                    if (err.name === 'AbortError') {
+                        console.log("Request cancelled by user");
+                    } else {
+                        alert("Error uploading CSV.");
+                    }
                 }
-                document.getElementById('loadingMsg').style.display = 'none';
-                closeModal();
+                stopTimer();
             }
 
             // Function to update or add a row

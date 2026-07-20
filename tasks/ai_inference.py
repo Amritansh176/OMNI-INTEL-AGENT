@@ -52,18 +52,29 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0, m
             
         # Validation Logic
         leads = structured_data.get("leads", [])
-        current_missing = []
+        incomplete_leads = []
+        
         if leads and isinstance(leads, list) and len(leads) > 0:
-            lead = leads[0] # check first lead
-            for field in ["name", "organization", "designation", "contact", "status"]:
-                val = lead.get(field, "")
-                if not val or val == "" or val.lower() == "n/a" or val.lower() == "unknown":
-                    current_missing.append(field)
+            for lead in leads:
+                missing = []
+                for field in ["name", "organization", "designation", "contact", "status"]:
+                    val = lead.get(field, "")
+                    if not val or val == "" or str(val).lower() in ["n/a", "unknown", "null"]:
+                        missing.append(field)
+                if missing:
+                    incomplete_leads.append({"lead": lead, "missing": missing})
         else:
-            current_missing = ["name", "organization", "designation", "contact", "status"]
+            incomplete_leads.append({"lead": {"name": target}, "missing": ["name", "organization", "designation", "contact", "status"]})
 
-        if len(current_missing) > 0 and depth < 10: # Cap at 10 depth
-            state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "validation_failed_retrying", "missing": current_missing, "depth": depth})
+        if len(incomplete_leads) > 0 and depth < 10: # Cap at 10 depth
+            # Pick the first incomplete lead to focus our next search on
+            focus_lead = incomplete_leads[0]["lead"]
+            current_missing = incomplete_leads[0]["missing"]
+            
+            # Use the specific entity name for the next dorking query instead of the generic target
+            entity_name = focus_lead.get("name") or focus_lead.get("organization") or target
+            
+            state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "validation_failed_retrying", "entity": entity_name, "missing": current_missing, "depth": depth})
             
             # Figure out next URL to crawl or trigger dorking
             next_url = None
@@ -72,18 +83,19 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0, m
                 # Prioritize links matching missing fields
                 prioritized = [l for l in links if any(m.lower() in l.lower() for m in current_missing)]
                 if prioritized:
-                    next_url = prioritized[0]
+                    # Randomize/offset based on depth to avoid clicking the same link
+                    next_url = prioritized[depth % len(prioritized)]
                 elif links:
-                    next_url = links[0] # just take the first interesting one
+                    next_url = links[depth % len(links)]
 
             if next_url and next_url.startswith("http"):
-                # Crawl the next link
+                # Crawl the next link, keeping the original target for state tracking
                 app.send_task("tasks.crawl.execute_crawl", args=[job_id, pipeline, next_url, current_missing, depth + 1, target])
                 return f"Job {job_id} missing {current_missing}. Looping to deeper link: {next_url}"
             else:
-                # Fallback to dorking
-                app.send_task("tasks.crawl.execute_crawl", args=[job_id, pipeline, target, current_missing, depth + 1, target])
-                return f"Job {job_id} missing {current_missing}. Looping via dorking."
+                # Fallback to dorking using the specific entity name
+                app.send_task("tasks.crawl.execute_crawl", args=[job_id, pipeline, entity_name, current_missing, depth + 1, target])
+                return f"Job {job_id} missing {current_missing}. Looping via dorking for entity {entity_name}."
 
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "ai_inference_completed"})
         
