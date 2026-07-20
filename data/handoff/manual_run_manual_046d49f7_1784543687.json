@@ -1,0 +1,16 @@
+{
+    "job_id": "manual_046d49f7",
+    "pipeline": "manual_run",
+    "target": "https://www.couterdrones.org/",
+    "data": {
+        "leads": [
+            {
+                "name": "",
+                "organization": "Sentrycs",
+                "designation": "Cyber Over RF counter-drone solutions",
+                "contact": "",
+                "status": ""
+            }
+        ]
+    }
+}
