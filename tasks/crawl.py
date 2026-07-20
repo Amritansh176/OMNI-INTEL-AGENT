@@ -12,15 +12,15 @@ def check_robots_sitemap(url):
         parsed = urlparse(url)
         base_url = f"{parsed.scheme}://{parsed.netloc}"
         
-        # Check ETag of homepage
-        head_resp = requests.head(base_url, timeout=5)
+        # Check ETag of homepage with stealth headers
+        head_resp = requests.head(base_url, headers=DorkingEngine.get_random_headers(), timeout=5)
         etag = head_resp.headers.get("ETag") or head_resp.headers.get("Last-Modified")
         
         if etag:
             if state_manager.check_and_add_hash(f"etag_{base_url}_{etag}"):
                 return True, "ETag unchanged, already crawled recently", True
                 
-        resp = requests.get(f"{base_url}/robots.txt", timeout=5)
+        resp = requests.get(f"{base_url}/robots.txt", headers=DorkingEngine.get_random_headers(), timeout=5)
         if resp.status_code == 200:
             return True, "Found robots.txt", False
             
@@ -57,42 +57,64 @@ def crawl_homepage_bfs(url, keywords):
         return None
 
 @app.task(bind=True, name="tasks.crawl.execute_crawl")
-def execute_crawl(self, job_id, pipeline, target, keywords):
+def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=None, depth=0, original_target=None):
     """
     Executes the tiered crawl logic for a target.
+    Supports infinite loop data extraction by taking `missing_fields` and `depth`.
     """
-    state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "crawling"})
+    if keywords is None:
+        keywords = missing_fields if missing_fields else []
+        
+    actual_target = original_target if original_target else target
+    state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "depth": depth, "url": target})
     
     is_url = target.startswith("http://") or target.startswith("https://")
     raw_data = None
     
     if is_url:
-        # Tier 1
-        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "crawling", "tier": 1})
-        has_sitemap, msg, is_unchanged = check_robots_sitemap(target)
-        
-        if is_unchanged:
-            state_manager.set_job_state(job_id, pipeline, "COMPLETED", target, {"step": "skipped_unchanged_etag"})
-            return f"Job {job_id} skipped: unchanged ETag."
+        # Tier 1 - Skip robots/sitemap on deep crawls (depth > 0)
+        if depth == 0:
+            state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "tier": 1})
+            has_sitemap, msg, is_unchanged = check_robots_sitemap(target)
+            
+            if is_unchanged:
+                state_manager.set_job_state(job_id, pipeline, "COMPLETED", actual_target, {"step": "skipped_unchanged_etag"})
+                return f"Job {job_id} skipped: unchanged ETag."
             
         # Tier 2
-        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "crawling", "tier": 2})
-        raw_data = crawl_homepage_bfs(target, keywords)
+        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "tier": 2, "depth": depth})
+        
+        # Merge missing fields into keywords for better link discovery
+        search_kws = keywords[:]
+        if missing_fields:
+            search_kws.extend(missing_fields)
+            
+        raw_data = crawl_homepage_bfs(target, search_kws)
         
         if raw_data == "DUPLICATE":
-            state_manager.set_job_state(job_id, pipeline, "COMPLETED", target, {"step": "skipped_duplicate_content"})
-            return f"Job {job_id} skipped: duplicate HTML content."
+            # If duplicate on a deep crawl, we might want to fallback to dorking instead of skipping
+            if depth > 0:
+                raw_data = None
+            else:
+                state_manager.set_job_state(job_id, pipeline, "COMPLETED", actual_target, {"step": "skipped_duplicate_content"})
+                return f"Job {job_id} skipped: duplicate HTML content."
     
     if not raw_data:
-        # Tier 3
-        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "crawling", "tier": 3})
-        raw_data = DorkingEngine.fallback_search(target, keywords)
+        # Tier 3 - Dorking
+        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "tier": 3, "depth": depth})
+        
+        # If we have missing fields, tailor the dorking query
+        dork_keywords = keywords
+        if missing_fields:
+            dork_keywords = missing_fields
+            
+        raw_data = DorkingEngine.fallback_search(target, dork_keywords)
         
     if raw_data:
-        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "crawl_completed"})
-        # Send to AI Inference queue
-        app.send_task("tasks.ai_inference.extract_structured_data", args=[job_id, pipeline, target, raw_data])
+        state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawl_completed", "depth": depth})
+        # Send to AI Inference queue, passing depth and missing_fields for the loop
+        app.send_task("tasks.ai_inference.extract_structured_data", args=[job_id, pipeline, actual_target, raw_data, depth, missing_fields])
         return f"Job {job_id} crawled successfully, sent to AI."
     else:
-        state_manager.set_job_state(job_id, pipeline, "FAILED", target, {"reason": "All tiers failed to extract data."})
+        state_manager.set_job_state(job_id, pipeline, "FAILED", actual_target, {"reason": "All tiers failed to extract data."})
         return f"Job {job_id} failed at all tiers."

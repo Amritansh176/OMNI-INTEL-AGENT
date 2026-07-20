@@ -5,6 +5,8 @@ from config import Config
 from celery_worker import app as celery_app
 import redis
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import functools
 import uuid
 import json
 import ollama
@@ -30,6 +32,7 @@ html = """
             .status-COMPLETED { color: green; font-weight: bold; }
             .status-FAILED { color: red; font-weight: bold; }
             .status-SKIPPED { color: gray; font-weight: bold; }
+            .status-QUEUED { color: #6f42c1; font-weight: bold; }
             
             /* Modal styles */
             .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
@@ -226,6 +229,8 @@ def enqueue_jobs(jobs):
         target = job.get("target")
         keywords = job.get("keywords", [])
         if target:
+            # Immediately register the job as QUEUED so the dashboard shows it
+            state_manager.set_job_state(job_id, "manual_run", "QUEUED", target, {"step": "queued", "keywords": keywords})
             celery_app.send_task("tasks.crawl.execute_crawl", args=[
                 job_id, 
                 "manual_run", 
@@ -235,7 +240,9 @@ def enqueue_jobs(jobs):
 
 @app.post("/api/start_job/prompt")
 async def start_job_prompt(prompt: str = Form(...)):
-    jobs = extract_targets_from_text(prompt)
+    # Run sync Ollama call in a thread so it doesn't block the event loop
+    loop = asyncio.get_event_loop()
+    jobs = await loop.run_in_executor(None, extract_targets_from_text, prompt)
     enqueue_jobs(jobs)
     return {"status": "started", "jobs": len(jobs)}
 
@@ -243,7 +250,9 @@ async def start_job_prompt(prompt: str = Form(...)):
 async def start_job_csv(file: UploadFile = File(...)):
     contents = await file.read()
     text = contents.decode('utf-8', errors='ignore')
-    jobs = extract_targets_from_text(text)
+    # Run sync Ollama call in a thread so it doesn't block the event loop
+    loop = asyncio.get_event_loop()
+    jobs = await loop.run_in_executor(None, extract_targets_from_text, text)
     enqueue_jobs(jobs)
     return {"status": "started", "jobs": len(jobs)}
 

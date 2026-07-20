@@ -1,0 +1,16 @@
+{
+    "job_id": "manual_c0347028",
+    "pipeline": "manual_run",
+    "target": "propeller manufacturers",
+    "data": {
+        "leads": [
+            {
+                "name": "Airmaster Propellers, Ltd.",
+                "organization": "Airmaster Propellers, Ltd.",
+                "designation": "Non-Certified Propeller Manufacturers",
+                "contact": "New Zealand-based",
+                "status": ""
+            }
+        ]
+    }
+}
