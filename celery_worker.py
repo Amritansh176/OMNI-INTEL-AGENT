@@ -10,6 +10,7 @@ app = Celery(
         "tasks.crawl",
         "tasks.ai_inference",
         "tasks.handoff",
+        "tasks.finetune",
         "pipelines.lead_scout",
         "pipelines.personal_audit"
     ]
@@ -33,4 +34,5 @@ app.conf.task_routes = {
     "tasks.crawl.*": {"queue": "crawl_queue"},
     "tasks.ai_inference.*": {"queue": "ai_inference_queue"},
     "tasks.handoff.*": {"queue": "handoff_queue"},
+    "tasks.finetune.*": {"queue": "finetune_loop"},
 }

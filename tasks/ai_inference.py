@@ -55,5 +55,10 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data):
         return f"Job {job_id} AI extraction complete."
 
     except Exception as e:
-        state_manager.set_job_state(job_id, pipeline, "FAILED", target, {"step": "ai_inference", "error": str(e)})
-        return f"Job {job_id} failed during AI inference: {str(e)}"
+        if self.request.retries < Config.MAX_RETRIES:
+            state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": f"ai_inference_retry_{self.request.retries+1}"})
+            # Exponential backoff retry
+            raise self.retry(exc=e, countdown=2 ** self.request.retries)
+        else:
+            state_manager.set_job_state(job_id, pipeline, "FAILED", target, {"step": "ai_inference", "error": "Max retries exceeded", "details": str(e)})
+            return f"Job {job_id} failed during AI inference after max retries."

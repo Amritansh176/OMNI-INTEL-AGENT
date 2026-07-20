@@ -1,9 +1,9 @@
 from celery_worker import app
 from config import Config
+from state_manager import state_manager
 import time
 import uuid
 
-# Mock dynamic data source for keywords (in real life, this might fetch from an API or file)
 def get_keywords_batch():
     return [
         {"target": "https://example.com", "keywords": ["ceo", "director", "founder"]},
@@ -16,6 +16,15 @@ def run_loop(self):
     Infinite loop for Lead Scout pipeline.
     Fetches keywords/targets and enqueues them to the crawl_queue.
     """
+    # Backpressure check
+    crawl_len = state_manager.redis_client.llen("crawl_queue")
+    ai_len = state_manager.redis_client.llen("ai_inference_queue")
+    
+    if crawl_len > Config.MAX_QUEUE_SIZE or ai_len > Config.MAX_QUEUE_SIZE:
+        time.sleep(Config.LOOP_IDLE_GAP_SEC * 2)
+        app.send_task("pipelines.lead_scout.run_loop")
+        return f"Backpressure active (Crawl: {crawl_len}, AI: {ai_len}). Slept and requeued."
+
     batch = get_keywords_batch()
     
     for item in batch:
@@ -27,10 +36,7 @@ def run_loop(self):
             item["keywords"]
         ])
     
-    # Wait a small gap before re-enqueueing to avoid pinning CPU
     time.sleep(Config.LOOP_IDLE_GAP_SEC)
-    
-    # Self-requeue
     app.send_task("pipelines.lead_scout.run_loop")
     
     return f"Enqueued {len(batch)} jobs in lead_scout_loop"

@@ -32,6 +32,14 @@ class StateManager:
         jobs = self.redis_client.hgetall("jobs")
         return {k: json.loads(v) for k, v in jobs.items()}
 
+    def check_and_add_hash(self, content_hash):
+        """
+        Returns True if hash was already present, False if it was newly added.
+        """
+        # SADD returns 1 if added, 0 if already existed
+        is_new = self.redis_client.sadd("crawled_content_hashes", content_hash)
+        return is_new == 0
+        
     def get_job(self, job_id):
         job = self.redis_client.hget("jobs", job_id)
         if job:
