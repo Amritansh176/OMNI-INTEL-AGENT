@@ -1,0 +1,23 @@
+{
+    "job_id": "manual_3edc521e",
+    "pipeline": "manual_run",
+    "target": "dronecomponent",
+    "data": {
+        "leads": [
+            {
+                "name": null,
+                "organization": "TSA",
+                "designation": null,
+                "contact": null,
+                "status": null
+            },
+            {
+                "name": null,
+                "organization": "Zbotic",
+                "designation": null,
+                "contact": null,
+                "status": null
+            }
+        ]
+    }
+}
