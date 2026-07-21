@@ -26,20 +26,23 @@ class DorkingEngine:
         }
 
     @staticmethod
-    def search_duckduckgo_sync(query):
-        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+    def search_yahoo_sync(query):
+        url = "https://search.yahoo.com/search"
         try:
-            resp = requests.get(url, headers=DorkingEngine.get_random_headers(), timeout=10)
+            resp = requests.get(url, params={"p": query}, headers=DorkingEngine.get_random_headers(), timeout=10)
             if resp.status_code == 200:
+                from bs4 import BeautifulSoup
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 results = []
-                for a in soup.find_all('a', class_='result__snippet'):
-                    results.append(a.text)
-                    if len(results) >= 5:
-                        break
+                for r in soup.find_all('div', class_='algo-sr'):
+                    text = r.get_text(separator=' ', strip=True)
+                    if text:
+                        results.append(text)
+                        if len(results) >= 10:
+                            break
                 return results
         except Exception as e:
-            print(f"DDG Sync Error: {e}")
+            print(f"Yahoo Sync Error: {e}")
         return []
 
     @staticmethod
@@ -54,18 +57,22 @@ class DorkingEngine:
 
     @staticmethod
     def fallback_search(target, keywords):
+        # Add random Jitter to prevent firing concurrent requests at the exact same millisecond
+        import time
+        import random
+        time.sleep(random.uniform(2, 5))
+        
         query = f"{target} {' OR '.join(keywords)}" if keywords else target
         
-        # Run both searches concurrently using threads
+        # Run Google and Yahoo concurrently. If Google blocks us, it returns [] and we still get Yahoo's results!
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             google_future = executor.submit(DorkingEngine.search_google_sync, query)
-            ddg_future = executor.submit(DorkingEngine.search_duckduckgo_sync, query)
+            yahoo_future = executor.submit(DorkingEngine.search_yahoo_sync, query)
             
             google_results = google_future.result()
-            ddg_results = ddg_future.result()
+            yahoo_results = yahoo_future.result()
             
-        # Combine and deduplicate
-        all_results = list(set(google_results + ddg_results))
+        all_results = list(set(google_results + yahoo_results))
         
         if not all_results:
             return None

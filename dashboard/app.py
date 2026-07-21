@@ -329,15 +329,14 @@ DECISION RULE:
 - If the input names one specific person or one specific company to investigate → pipeline = "personal_audit".
 - If ambiguous, default to "lead_scout" and note the ambiguity in "reasoning".
 
-Do not invent companies or people that aren't implied by the input — you're deciding STRATEGY, not 
-fabricating results. The actual entities will be found later by the crawler.
+CRITICAL: DO NOT copy the examples ("counter-drone...", "fintech..."). You MUST extract the target ONLY from the user's actual Input text below.
 
 Return ONLY this JSON object. No markdown fences, no explanation before or after:
 {{
     "pipeline": "lead_scout|personal_audit",
     "reasoning": "one sentence explaining why you picked this pipeline",
     "jobs": [
-        {{"target": "search topic OR exact entity name", "keywords": ["attribute1", "attribute2"]}}
+        {{"target": "extract the search topic or entity name from the Input text", "keywords": ["attribute1", "attribute2"]}}
     ]
 }}
 

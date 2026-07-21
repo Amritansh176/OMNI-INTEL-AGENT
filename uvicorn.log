@@ -1,7 +1,15 @@
-INFO:     Started server process [15290]
+INFO:     Started server process [17982]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:52536 - "GET / HTTP/1.1" 200 OK
-INFO:     127.0.0.1:52539 - "WebSocket /ws" [accepted]
+INFO:     127.0.0.1:55238 - "POST /api/cancel_job/manual_f53fda46 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55238 - "POST /api/cancel_job/manual_f53fda46 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55238 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55244 - "WebSocket /ws" [accepted]
 INFO:     connection open
+INFO:     127.0.0.1:55242 - "POST /api/start_job/prompt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55426 - "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 Not Found
+rce quit)
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [17763]

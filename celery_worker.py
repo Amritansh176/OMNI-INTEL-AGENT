@@ -30,15 +30,5 @@ app.conf.update(
     worker_prefetch_multiplier=1 # Recommended for long running tasks
 )
 
-# Route tasks to specific queues
-app.conf.task_routes = {
-    "pipelines.lead_scout.*": {"queue": "lead_scout_loop"},
-    "pipelines.personal_audit.*": {"queue": "personal_audit_loop"},
-    "tasks.crawl.*": {"queue": "crawl_queue"},
-    "tasks.ai_inference.*": {"queue": "ai_inference_queue"},
-    "tasks.ai_query_generator.*": {"queue": "ai_inference_queue"},
-    "tasks.semantic_filter.*": {"queue": "ai_inference_queue"},
-    "tasks.quality_scorer.*": {"queue": "ai_inference_queue"},
-    "tasks.handoff.*": {"queue": "handoff_queue"},
-    "tasks.finetune.*": {"queue": "finetune_loop"},
-}
+# Removed task_routes so all tasks default to the 'celery' queue. 
+# This ensures a single local worker picks up all tasks without needing complex -Q flags.
