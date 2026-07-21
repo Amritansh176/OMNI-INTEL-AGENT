@@ -289,7 +289,7 @@ def enqueue_jobs(jobs):
         if target:
             # Immediately register the job as QUEUED so the dashboard shows it
             state_manager.set_job_state(job_id, "manual_run", "QUEUED", target, {"step": "queued", "keywords": keywords})
-            celery_app.send_task("tasks.crawl.execute_crawl", args=[
+            celery_app.send_task("tasks.ai_query_generator.generate_queries", args=[
                 job_id, 
                 "manual_run", 
                 target, 

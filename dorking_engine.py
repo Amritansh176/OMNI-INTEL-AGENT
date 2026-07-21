@@ -56,7 +56,7 @@ class DorkingEngine:
 
     @staticmethod
     async def fallback_search_async(target, keywords):
-        query = f"{target} {' OR '.join(keywords)}"
+        query = f"{target} {' OR '.join(keywords)}" if keywords else target
         
         async with aiohttp.ClientSession() as session:
             # Run both searches concurrently (Multi-Source Aggregation)

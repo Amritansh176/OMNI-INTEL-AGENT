@@ -57,7 +57,8 @@ def crawl_homepage_bfs(url, keywords):
         return None
 
 @app.task(bind=True, name="tasks.crawl.execute_crawl")
-def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=None, depth=0, original_target=None):
+def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=None, 
+                  depth=0, original_target=None, query_strategy=None, parent_job_id=None):
     """
     Executes the tiered crawl logic for a target.
     Supports infinite loop data extraction by taking `missing_fields` and `depth`.
@@ -112,9 +113,17 @@ def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=
         
     if raw_data:
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawl_completed", "depth": depth})
-        # Send to AI Inference queue, passing depth and missing_fields for the loop
-        app.send_task("tasks.ai_inference.extract_structured_data", args=[job_id, pipeline, actual_target, raw_data, depth, missing_fields])
-        return f"Job {job_id} crawled successfully, sent to AI."
+        # Send to Semantic Filter instead of AI Extractor
+        app.send_task("tasks.semantic_filter.filter_and_chunk", args=[
+            job_id, pipeline, target, raw_data
+        ], kwargs={
+            "keywords": search_kws if 'search_kws' in locals() else keywords,
+            "depth": depth,
+            "original_target": actual_target,
+            "query_strategy": query_strategy,
+            "parent_job_id": parent_job_id
+        })
+        return f"Job {job_id} crawled successfully, sent to semantic filter."
     else:
         state_manager.set_job_state(job_id, pipeline, "FAILED", actual_target, {"reason": "All tiers failed to extract data."})
         return f"Job {job_id} failed at all tiers."

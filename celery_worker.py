@@ -9,6 +9,9 @@ app = Celery(
     include=[
         "tasks.crawl",
         "tasks.ai_inference",
+        "tasks.ai_query_generator",
+        "tasks.semantic_filter",
+        "tasks.quality_scorer",
         "tasks.handoff",
         "tasks.finetune",
         "pipelines.lead_scout",
@@ -33,6 +36,9 @@ app.conf.task_routes = {
     "pipelines.personal_audit.*": {"queue": "personal_audit_loop"},
     "tasks.crawl.*": {"queue": "crawl_queue"},
     "tasks.ai_inference.*": {"queue": "ai_inference_queue"},
+    "tasks.ai_query_generator.*": {"queue": "ai_inference_queue"},
+    "tasks.semantic_filter.*": {"queue": "ai_inference_queue"},
+    "tasks.quality_scorer.*": {"queue": "ai_inference_queue"},
     "tasks.handoff.*": {"queue": "handoff_queue"},
     "tasks.finetune.*": {"queue": "finetune_loop"},
 }
