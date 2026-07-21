@@ -303,38 +303,18 @@ async def get():
 
 def extract_targets_from_text(text: str):
     prompt = f"""You are a task-understanding assistant for an intelligence-gathering system. 
-Read the input below and figure out what the user actually wants — do not just copy words as targets.
+Read the input below and figure out what the user actually wants.
 
 There are exactly two possible pipeline types:
+1. "lead_scout" — The user wants to FIND NEW entities (companies, startups, people) related to a topic or industry. Example: "counter-drone companies in India", "propeller manufacturers".
+2. "personal_audit" — The user wants to INVESTIGATE an ALREADY KNOWN specific person or specific company. Example: "background check on Rohan Mehta", "audit ABC Pvt Ltd".
 
-1. "lead_scout" — the user wants to find Indian companies/organizations related to a topic, 
-   industry, or set of keywords. Example: "counter-drone companies in India", "fintech startups Bangalore", 
-   "EV battery manufacturers". In this case:
-   - "target" should be a SEARCH TOPIC (e.g. "counter-drone technology companies India"), 
-     NOT a literal keyword string.
-   - Generate targets that will surface real Indian companies — think about how you'd search for this 
-     (industry associations, "top N companies in X India", sector-specific directories, news coverage).
-   - keywords should be the specific attributes to extract for each company found 
-     (e.g. ["founder", "headquarters", "funding", "contact"]).
-
-2. "personal_audit" — the user wants a background check / due-diligence profile on a SPECIFIC named 
-   person or a specific single company (not a topic/sector). Example: "background check on Rohan Mehta, 
-   CEO of XYZ Ltd", "audit ABC Pvt Ltd". In this case:
-   - "target" is the exact name of the person or company.
-   - keywords should be the specific things to find (e.g. ["past companies", "legal disputes", 
-     "directorships", "social media presence"]).
-
-DECISION RULE:
-- If the input names a sector/topic/industry without one specific named entity → pipeline = "lead_scout".
-- If the input names one specific person or one specific company to investigate → pipeline = "personal_audit".
-- If ambiguous, default to "lead_scout" and note the ambiguity in "reasoning".
-
-CRITICAL: DO NOT copy the examples ("counter-drone...", "fintech..."). You MUST extract the target ONLY from the user's actual Input text below.
+CRITICAL: DO NOT copy the examples. You MUST extract the target ONLY from the user's actual Input text.
 
 Return ONLY this JSON object. No markdown fences, no explanation before or after:
 {{
+    "thought_process": "Analyze the query here: Does this seem like a request to find new leads (lead_scout) or investigate a specific known entity (personal_audit)?",
     "pipeline": "lead_scout|personal_audit",
-    "reasoning": "one sentence explaining why you picked this pipeline",
     "jobs": [
         {{"target": "extract the search topic or entity name from the Input text", "keywords": ["attribute1", "attribute2"]}}
     ]

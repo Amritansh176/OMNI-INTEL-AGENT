@@ -129,7 +129,7 @@ Raw Data:
                 val = lead.get(field, "")
                 if val and str(val).lower() not in ["", "n/a", "unknown", "null", "none"]:
                     filled += 1
-            if filled >= 2:  # At least 2 fields filled = real data
+            if filled >= 1:  # Even 1 field filled (e.g. just a company name) is considered valid data
                 has_any_real_data = True
                 lead["source_url"] = source_url  # Track where this data came from
 

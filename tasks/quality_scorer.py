@@ -43,10 +43,12 @@ Extracted Leads:
 
 Score each metric from 0.0 to 1.0, applying these rules strictly:
 1. completeness: Fraction of leads with 3+ non-empty fields. All-empty or single-field leads score near 0.0.
-2. relevance: Do the organization/name values plausibly relate to "{target}"? Generic or off-topic entities score near 0.0.
+2. relevance: Does the extracted lead genuinely relate to the target "{target}" based on the Source Text Context? Even if the organization name doesn't explicitly sound related (e.g. "Zen Technologies" for "drones"), check if the source text proves their relevance. Generic or off-topic entities score near 0.0.
 3. confidence: Does this look like real extracted data (specific names, real-looking contacts/titles) or generic placeholder-style text (e.g. "Company Inc.", "info@example.com", "Manager")? Does it match the Source Text Context? Placeholder-looking or fabricated data scores near 0.0.
 
-Do not be generous — when in doubt, score lower. overall_score should be the average of the three, not a rounded-up value.
+CRITICAL INSTRUCTION FOR RELEVANCE: Be highly generous with the relevance score. If there is even a slight, partial, or indirect connection between the lead and the target topic, immediately give a high relevance score (0.8 to 1.0). Do not be strict about relevance.
+
+overall_score should be the average of the three, not a rounded-up value.
 
 Return ONLY this JSON object. No markdown fences, no explanation before or after:
 {{
@@ -76,7 +78,17 @@ Return ONLY this JSON object. No markdown fences, no explanation before or after
     except Exception as e:
         scores = {"overall_score": 0.5, "reasoning": f"Scoring error: {str(e)}"}
 
-    overall_score = float(scores.get("overall_score", 0.0))
+    completeness = float(scores.get("completeness", 0.0))
+    relevance = float(scores.get("relevance", 0.0))
+    confidence = float(scores.get("confidence", 0.0))
+
+    # User Request: If relevance is very high (>0.8) and confidence is acceptable (>0.5), deprioritize completeness
+    if relevance >= 0.8 and confidence >= 0.5:
+        overall_score = (relevance * 0.70) + (confidence * 0.20) + (completeness * 0.10)
+    else:
+        overall_score = float(scores.get("overall_score", (completeness + relevance + confidence) / 3.0))
+
+    scores["overall_score"] = round(overall_score, 2)
     reasoning = scores.get("reasoning", "")
 
     if overall_score >= Config.QUALITY_THRESHOLD:
