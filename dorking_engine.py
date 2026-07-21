@@ -1,9 +1,9 @@
-import asyncio
-import aiohttp
+import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 from googlesearch import search
 from fake_useragent import UserAgent
+import concurrent.futures
 
 class DorkingEngine:
     # Initialize fake-useragent for stealth
@@ -26,28 +26,26 @@ class DorkingEngine:
         }
 
     @staticmethod
-    async def search_duckduckgo_async(query, session):
+    def search_duckduckgo_sync(query):
         url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
         try:
-            async with session.get(url, headers=DorkingEngine.get_random_headers(), timeout=10) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-                    results = []
-                    for a in soup.find_all('a', class_='result__snippet'):
-                        results.append(a.text)
-                        if len(results) >= 5:
-                            break
-                    return results
+            resp = requests.get(url, headers=DorkingEngine.get_random_headers(), timeout=10)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                results = []
+                for a in soup.find_all('a', class_='result__snippet'):
+                    results.append(a.text)
+                    if len(results) >= 5:
+                        break
+                return results
         except Exception as e:
-            print(f"DDG Async Error: {e}")
+            print(f"DDG Sync Error: {e}")
         return []
 
     @staticmethod
     def search_google_sync(query):
         results = []
         try:
-            # googlesearch-python advanced=True returns objects with title, description, url
             for result in search(query, num_results=5, advanced=True):
                 results.append(f"{result.title} - {result.description}")
         except Exception as e:
@@ -55,16 +53,16 @@ class DorkingEngine:
         return results
 
     @staticmethod
-    async def fallback_search_async(target, keywords):
+    def fallback_search(target, keywords):
         query = f"{target} {' OR '.join(keywords)}" if keywords else target
         
-        async with aiohttp.ClientSession() as session:
-            # Run both searches concurrently (Multi-Source Aggregation)
-            loop = asyncio.get_event_loop()
-            google_task = loop.run_in_executor(None, DorkingEngine.search_google_sync, query)
-            ddg_task = DorkingEngine.search_duckduckgo_async(query, session)
+        # Run both searches concurrently using threads
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            google_future = executor.submit(DorkingEngine.search_google_sync, query)
+            ddg_future = executor.submit(DorkingEngine.search_duckduckgo_sync, query)
             
-            google_results, ddg_results = await asyncio.gather(google_task, ddg_task)
+            google_results = google_future.result()
+            ddg_results = ddg_future.result()
             
         # Combine and deduplicate
         all_results = list(set(google_results + ddg_results))
@@ -77,8 +75,3 @@ class DorkingEngine:
             "target": target,
             "results": all_results
         }
-        
-    @staticmethod
-    def fallback_search(target, keywords):
-        """Synchronous wrapper for Celery tasks to call easily"""
-        return asyncio.run(DorkingEngine.fallback_search_async(target, keywords))

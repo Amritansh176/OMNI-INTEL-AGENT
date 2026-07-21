@@ -10,6 +10,13 @@ import ollama
 import json
 
 
+def is_low_value_content(text_content):
+    if len(text_content.strip()) < 200:
+        return True
+    boilerplate = ["page not found", "enable javascript", "cookie policy", "captcha", "are you a human"]
+    return any(b in text_content.lower() for b in boilerplate)
+
+
 @app.task(bind=True, name="tasks.ai_inference.extract_structured_data", rate_limit='10/m')
 def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0, 
                             missing_fields=None, query_strategy=None, parent_job_id=None):
@@ -17,6 +24,21 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0,
     Agentic AI Extractor: Extracts structured intelligence AND decides the next action.
     Returns both extracted leads and a next_action recommendation.
     """
+    # Get text content from raw_data
+    if isinstance(raw_data, dict):
+        text_content = raw_data.get("text", json.dumps(raw_data))
+        source_url = raw_data.get("url", target)
+        interesting_links = raw_data.get("interesting_links", [])
+    else:
+        text_content = str(raw_data)
+        source_url = target
+        interesting_links = []
+
+    # Cheap pre-filter to save LLM calls
+    if is_low_value_content(text_content):
+        _send_to_quality_scorer(job_id, pipeline, target, {"leads": [], "confidence": 0.0, "next_action": {"type": "mutate_query", "target": target, "reason": "Low value content detected"}}, query_strategy, parent_job_id)
+        return f"Job {job_id}: Low value content detected."
+
     state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, 
                                 {"step": "ai_extraction", "depth": depth, "strategy": query_strategy})
 
@@ -28,16 +50,6 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0,
         context_parts.append(f"This data was obtained via strategy: {query_strategy}")
     
     extra_context = "\n".join(context_parts)
-
-    # Get text content from raw_data
-    if isinstance(raw_data, dict):
-        text_content = raw_data.get("text", json.dumps(raw_data))
-        source_url = raw_data.get("url", target)
-        interesting_links = raw_data.get("interesting_links", [])
-    else:
-        text_content = str(raw_data)
-        source_url = target
-        interesting_links = []
 
     # Format available links for the AI to consider
     links_context = ""
@@ -89,7 +101,8 @@ Raw Data:
         response = ollama.chat(
             model=Config.OLLAMA_MODEL, 
             messages=[{'role': 'user', 'content': prompt}],
-            format='json'
+            format='json',
+            options={'timeout': 30}
         )
 
         output_text = response['message']['content']
@@ -127,7 +140,7 @@ Raw Data:
             _send_to_quality_scorer(job_id, pipeline, target, result, query_strategy, parent_job_id)
             return f"Job {job_id}: Max depth {depth} reached. Sending to quality scorer."
 
-        if action_type == "sufficient" or (has_any_real_data and confidence >= 0.6):
+        if action_type == "sufficient" or (has_any_real_data and confidence >= 0.5):
             # AI says data is good enough — send to quality scoring
             state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target,
                                         {"step": "extraction_sufficient", "confidence": confidence, "leads": len(leads)})

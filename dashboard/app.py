@@ -315,7 +315,8 @@ Input text:
         response = ollama.chat(
             model=Config.OLLAMA_MODEL, 
             messages=[{'role': 'user', 'content': prompt}],
-            format='json'
+            format='json',
+            options={'timeout': 30}
         )
         output = response['message']['content']
         result = json.loads(output)

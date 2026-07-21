@@ -26,7 +26,7 @@ class Config:
     # Quality Scorer: minimum score (0-1) for a lead to pass to handoff
     QUALITY_THRESHOLD = float(os.getenv("QUALITY_THRESHOLD", "0.7"))
     # Maximum depth for the agentic extraction loop
-    MAX_AI_LOOP_DEPTH = int(os.getenv("MAX_AI_LOOP_DEPTH", "10"))
+    MAX_AI_LOOP_DEPTH = int(os.getenv("MAX_AI_LOOP_DEPTH", "3"))
     # Semantic Filter: number of top text chunks to keep per page
     SEMANTIC_FILTER_TOP_K = int(os.getenv("SEMANTIC_FILTER_TOP_K", "3"))
     # Number of diverse queries the AI Query Generator produces per job

@@ -69,7 +69,8 @@ Be creative and specific. Do NOT use generic queries."""
         response = ollama.chat(
             model=Config.OLLAMA_MODEL, 
             messages=[{'role': 'user', 'content': prompt}],
-            format='json'
+            format='json',
+            options={'timeout': 30}
         )
 
         output_text = response['message']['content']
