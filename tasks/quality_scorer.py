@@ -11,14 +11,15 @@ import ollama
 import json
 
 
-@app.task(bind=True, name="tasks.quality_scorer.score_and_gate")
+@app.task(bind=True, name="tasks.quality_scorer.score_and_gate", time_limit=180, soft_time_limit=150)
 def score_and_gate(self, job_id, pipeline, target, extraction_result, query_strategy=None, parent_job_id=None):
     """
     Scores the extracted data for completeness, relevance, and confidence.
     Gates low-quality data from reaching the final handoff JSON.
     """
-    state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, 
-                                {"step": "quality_scoring"})
+    if not state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, 
+                                {"step": "quality_scoring"}):
+        return f"Job {job_id} cancelled."
 
     leads = extraction_result.get("leads", [])
     if not leads:

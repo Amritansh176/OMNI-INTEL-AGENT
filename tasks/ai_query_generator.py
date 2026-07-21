@@ -10,15 +10,16 @@ import ollama
 import json
 
 
-@app.task(bind=True, name="tasks.ai_query_generator.generate_queries")
+@app.task(bind=True, name="tasks.ai_query_generator.generate_queries", time_limit=300, soft_time_limit=270)
 def generate_queries(self, job_id, pipeline, target, keywords=None, depth=0, original_target=None):
     """
     Uses LLaMA to dynamically generate diverse search queries for a target.
     Feeds successful past patterns into the prompt so the AI learns over time.
     """
     actual_target = original_target or target
-    state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, 
-                                {"step": "ai_query_generation", "depth": depth})
+    # If the job was cancelled by the user, abort early
+    if not state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "generating_queries", "depth": depth}):
+        return f"Job {job_id} cancelled."
 
     # Build context from feedback store
     past_successes = feedback_store.get_successful_patterns(limit=5)

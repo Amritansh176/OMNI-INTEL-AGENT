@@ -35,6 +35,21 @@ html = """
             .status-FAILED { color: red; font-weight: bold; }
             .status-SKIPPED { color: gray; font-weight: bold; }
             .status-QUEUED { color: #6f42c1; font-weight: bold; }
+            .status-CANCELLED { color: #dc3545; font-weight: bold; }
+            
+            .cancel-btn {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 4px 8px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 12px;
+                margin-top: 5px;
+            }
+            .cancel-btn:hover {
+                background-color: #c82333;
+            }
             
             /* Modal styles */
             .modal { display: none; position: fixed; z-index: 1; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); }
@@ -163,6 +178,19 @@ html = """
                 stopTimer();
             }
 
+            function cancelJob(job_id) {
+                if (confirm('Are you sure you want to cancel this job?')) {
+                    fetch('/api/cancel_job/' + job_id, { method: 'POST' })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status !== 'success') {
+                                alert('Failed to cancel job');
+                            }
+                        })
+                        .catch(err => alert('Error cancelling job'));
+                }
+            }
+
             async function submitPrompt(e) {
                 e.preventDefault();
                 const prompt = document.getElementById('promptInput').value;
@@ -229,11 +257,16 @@ html = """
                     stepBadge = `<br><div class="step-badge">${stepText}${spinner}</div>`;
                 }
 
+                let cancelBtnHtml = '';
+                if (data.state === 'QUEUED' || data.state === 'IN_PROGRESS') {
+                    cancelBtnHtml = `<br><button class="cancel-btn" onclick="cancelJob('${job_id}')">Cancel</button>`;
+                }
+
                 var rowHtml = `
                     <td>${job_id}</td>
                     <td>${data.pipeline}</td>
                     <td>${data.target}</td>
-                    <td class="status-${data.state}">${data.state}${stepBadge}</td>
+                    <td class="status-${data.state}">${data.state}${stepBadge}${cancelBtnHtml}</td>
                     <td><pre style="margin:0; font-size: 12px; max-height: 200px; overflow: auto;">${JSON.stringify(data.metadata, null, 2)}</pre></td>
                     <td>${data.updated_at}</td>
                 `;
@@ -361,27 +394,26 @@ def process_input_background(parent_job_id: str, text: str, source_type: str):
 
 
 @app.post("/api/start_job/prompt")
-async def start_job_prompt(prompt: str = Form(...)):
+async def start_job_prompt(background_tasks: BackgroundTasks, prompt: str = Form(...)):
     parent_job_id = f"prompt_{uuid.uuid4().hex[:8]}"
     # Register immediately so it shows on dashboard
     state_manager.set_job_state(parent_job_id, "manual_run", "QUEUED", prompt[:50] + "...", {"step": "queued"})
     
-    # Fire and forget the heavy LLM parsing in a separate thread so it doesn't block ASGI response
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, process_input_background, parent_job_id, prompt, "User Prompt")
+    # Let FastAPI manage the thread lifecycle to prevent zombie processes during shutdown
+    background_tasks.add_task(process_input_background, parent_job_id, prompt, "User Prompt")
     
     return {"status": "started", "job_id": parent_job_id}
 
 @app.post("/api/start_job/csv")
-async def start_job_csv(file: UploadFile = File(...)):
+async def start_job_csv(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     contents = await file.read()
     text = contents.decode('utf-8', errors='ignore')
     
     parent_job_id = f"csv_{uuid.uuid4().hex[:8]}"
     state_manager.set_job_state(parent_job_id, "manual_run", "QUEUED", file.filename, {"step": "queued"})
     
-    loop = asyncio.get_event_loop()
-    loop.run_in_executor(None, process_input_background, parent_job_id, text, f"CSV: {file.filename}")
+    # Let FastAPI manage the thread lifecycle to prevent zombie processes during shutdown
+    background_tasks.add_task(process_input_background, parent_job_id, text, f"CSV: {file.filename}")
     
     return {"status": "started", "job_id": parent_job_id}
 
@@ -411,3 +443,13 @@ async def websocket_endpoint(websocket: WebSocket):
         print("WebSocket disconnected:", e)
     finally:
         pubsub.close()
+
+@app.post("/api/cancel_job/{job_id}")
+async def cancel_job(job_id: str):
+    job = state_manager.get_job(job_id)
+    pipeline = job.get("pipeline", "unknown") if job else "unknown"
+    target = job.get("target", "unknown") if job else "unknown"
+    
+    # Setting state to CANCELLED will prevent any further Celery task from executing for this job
+    state_manager.set_job_state(job_id, pipeline, "CANCELLED", target, {"step": "cancelled_by_user"})
+    return {"status": "success"}

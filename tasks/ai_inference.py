@@ -17,7 +17,7 @@ def is_low_value_content(text_content):
     return any(b in text_content.lower() for b in boilerplate)
 
 
-@app.task(bind=True, name="tasks.ai_inference.extract_structured_data", rate_limit='10/m')
+@app.task(bind=True, name="tasks.ai_inference.extract_structured_data", rate_limit='10/m', time_limit=300, soft_time_limit=270)
 def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0, 
                             missing_fields=None, query_strategy=None, parent_job_id=None):
     """
@@ -39,8 +39,9 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0,
         _send_to_quality_scorer(job_id, pipeline, target, {"leads": [], "confidence": 0.0, "next_action": {"type": "mutate_query", "target": target, "reason": "Low value content detected"}}, query_strategy, parent_job_id)
         return f"Job {job_id}: Low value content detected."
 
-    state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, 
-                                {"step": "ai_extraction", "depth": depth, "strategy": query_strategy})
+    if not state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, 
+                                {"step": "ai_extraction", "depth": depth, "strategy": query_strategy}):
+        return f"Job {job_id} cancelled."
 
     # Build the agentic prompt
     context_parts = []

@@ -56,7 +56,7 @@ def crawl_homepage_bfs(url, keywords):
     except Exception as e:
         return None
 
-@app.task(bind=True, name="tasks.crawl.execute_crawl")
+@app.task(bind=True, name="tasks.crawl.execute_crawl", time_limit=300, soft_time_limit=270)
 def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=None, 
                   depth=0, original_target=None, query_strategy=None, parent_job_id=None):
     """
@@ -67,7 +67,8 @@ def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=
         keywords = missing_fields if missing_fields else []
         
     actual_target = original_target if original_target else target
-    state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "depth": depth, "url": target})
+    if not state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "depth": depth, "url": target}):
+        return f"Job {job_id} cancelled."
     
     is_url = target.startswith("http://") or target.startswith("https://")
     raw_data = None

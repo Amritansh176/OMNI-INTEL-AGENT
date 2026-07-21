@@ -9,8 +9,12 @@ class StateManager:
 
     def set_job_state(self, job_id, pipeline, state, target, metadata=None):
         """
-        Set the state of a specific job.
+        Set the state of a specific job. Returns False if job was cancelled.
         """
+        existing_job = self.get_job(job_id)
+        if existing_job and existing_job.get("state") == "CANCELLED" and state != "CANCELLED":
+            return False
+
         data = {
             "pipeline": pipeline,
             "target": target,
@@ -24,6 +28,7 @@ class StateManager:
         # Also push to a pub/sub channel for live dashboard updates
         message = {"job_id": job_id, **data}
         self.redis_client.publish("job_updates", json.dumps(message))
+        return True
 
     def get_all_jobs(self):
         """
