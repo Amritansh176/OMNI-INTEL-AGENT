@@ -66,20 +66,26 @@ Strategies to use:
 Be creative and specific. Do NOT use generic queries."""
 
     try:
-        response = ollama.chat(model=Config.OLLAMA_MODEL, messages=[
-            {'role': 'user', 'content': prompt}
-        ])
+        response = ollama.chat(
+            model=Config.OLLAMA_MODEL, 
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json'
+        )
 
         output_text = response['message']['content']
+        try:
+            result = json.loads(output_text)
+            if isinstance(result, list):
+                queries = result
+            elif isinstance(result, dict) and "queries" in result:
+                queries = result["queries"]
+            else:
+                queries = []
+        except json.JSONDecodeError:
+            queries = []
 
-        # Parse JSON array from response
-        start = output_text.find('[')
-        end = output_text.rfind(']') + 1
-        if start != -1 and end > start:
-            queries = json.loads(output_text[start:end])
-        else:
-            # Fallback: generate a basic query
-            queries = [{"query": f"{target} {' '.join(keywords or [])}", "strategy": "basic"}]
+        if not queries:
+            queries = [{"query": f"{actual_target} {' '.join(keywords or [])}", "strategy": "basic"}]
 
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target,
                                     {"step": "queries_generated", "count": len(queries), "depth": depth})

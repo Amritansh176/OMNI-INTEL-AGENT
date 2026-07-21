@@ -45,39 +45,39 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0,
         links_preview = interesting_links[:10]  # Show up to 10 links
         links_context = f"\n\nAvailable links found on this page:\n" + "\n".join([f"- {l}" for l in links_preview])
 
-    prompt = f"""You are an expert intelligence extraction AI performing multi-step reasoning.
+    prompt = f"""You are an intelligence extraction system. You extract only what is explicitly present in the source text — you never infer, guess, or fabricate.
 
 {extra_context}
 
-Analyze the following web data and:
-1. Extract ALL identifiable leads (people, companies, organizations)
-2. Assess the data completeness
-3. Recommend the BEST next action
+TASK:
+1. Extract every identifiable lead (person, company, or organization) from the text below.
+2. For any field not explicitly stated in the text, use an empty string "" — never guess, never fabricate an email/phone/name.
+3. Assess whether the extracted data is complete enough to stop, or whether more crawling/searching is needed.
 
-Return ONLY a valid JSON object matching this EXACT schema:
+Return ONLY this JSON object. No markdown fences, no reasoning text, no commentary before or after:
 {{
     "leads": [
         {{
-            "name": "person or entity name",
-            "organization": "company or org name",
-            "designation": "job title or role",
-            "contact": "email, phone, or contact info",
-            "status": "any relevant status or description"
+            "name": "",
+            "organization": "",
+            "designation": "",
+            "contact": "",
+            "status": ""
         }}
     ],
-    "confidence": 0.0 to 1.0,
+    "confidence": 0.0,
     "next_action": {{
         "type": "crawl_subpage|search_entity|mutate_query|sufficient",
-        "target": "URL or entity name for next action",
-        "reason": "why this action will help"
+        "target": "",
+        "reason": ""
     }}
 }}
 
-Action types:
-- "crawl_subpage": Crawl a specific URL from the available links (use when you see a promising subpage like /about, /contact, /team)
-- "search_entity": Perform a new search for a specific entity you found (use when you found a name but need more details)
-- "mutate_query": Try a different search approach (use when current data is very low quality)
-- "sufficient": Data extraction is complete enough to proceed (use when all key fields are reasonably filled)
+Action type guide:
+- crawl_subpage: pick one URL from "Available links" below — most likely /about, /team, /contact, /leadership
+- search_entity: you found a name/org but no contact details — request a targeted search for that specific entity
+- mutate_query: the text is irrelevant boilerplate (nav menus, cookie notices, ads) — request a different search approach entirely
+- sufficient: at least one lead has 2+ real fields filled and nothing further would help
 {links_context}
 
 Source URL: {source_url}
@@ -86,20 +86,17 @@ Raw Data:
 {text_content[:4000]}"""
 
     try:
-        response = ollama.chat(model=Config.OLLAMA_MODEL, messages=[
-            {'role': 'user', 'content': prompt}
-        ])
+        response = ollama.chat(
+            model=Config.OLLAMA_MODEL, 
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json'
+        )
 
         output_text = response['message']['content']
 
         # Parse the JSON response
         try:
-            start = output_text.find('{')
-            end = output_text.rfind('}') + 1
-            if start != -1 and end > start:
-                result = json.loads(output_text[start:end])
-            else:
-                result = {"leads": [], "confidence": 0.0, "next_action": {"type": "mutate_query", "target": target, "reason": "No JSON in AI response"}}
+            result = json.loads(output_text)
         except json.JSONDecodeError:
             result = {"leads": [], "confidence": 0.0, "next_action": {"type": "mutate_query", "target": target, "reason": "Invalid JSON from AI"}}
 

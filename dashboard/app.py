@@ -50,6 +50,9 @@ html = """
             .form-group label { display: block; margin-bottom: 5px; font-weight: bold;}
             .form-group input, .form-group textarea { width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
             .form-group small { display: block; margin-top: 5px; color: #666; }
+            .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(0,0,0,0.1); border-radius: 50%; border-top-color: #007bff; animation: spin 1s ease-in-out infinite; vertical-align: middle; }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            .step-badge { display: inline-block; padding: 4px 8px; background-color: #e9ecef; border-radius: 12px; font-size: 11px; color: #495057; margin-top: 5px; font-weight: normal; letter-spacing: 0.5px; }
         </style>
     </head>
     <body>
@@ -218,11 +221,19 @@ html = """
             function upsertRow(job_id, data) {
                 var tbody = document.getElementById('jobs-body');
                 var existingRow = document.getElementById('row-' + job_id);
+                
+                let stepBadge = "";
+                if (data.metadata && data.metadata.step) {
+                    let stepText = data.metadata.step.replace(/_/g, ' ').toUpperCase();
+                    let spinner = (data.state === "IN_PROGRESS" || data.state === "QUEUED") ? '<div class="spinner" style="margin-left: 6px;"></div>' : '';
+                    stepBadge = `<br><div class="step-badge">${stepText}${spinner}</div>`;
+                }
+
                 var rowHtml = `
                     <td>${job_id}</td>
                     <td>${data.pipeline}</td>
                     <td>${data.target}</td>
-                    <td class="status-${data.state}">${data.state}</td>
+                    <td class="status-${data.state}">${data.state}${stepBadge}</td>
                     <td><pre style="margin:0; font-size: 12px; max-height: 200px; overflow: auto;">${JSON.stringify(data.metadata, null, 2)}</pre></td>
                     <td>${data.updated_at}</td>
                 `;
@@ -258,61 +269,120 @@ async def get():
     return HTMLResponse(html)
 
 def extract_targets_from_text(text: str):
-    prompt = f"""
-    You are an AI assistant helping to trigger web scraping jobs. 
-    Analyze the following input text (which could be a CSV or a natural language prompt) and extract the target URLs (or company names/entities) and the relevant keywords to search for.
-    Return ONLY a valid JSON object matching this schema:
-    {{
-        "jobs": [
-            {{"target": "url_or_entity", "keywords": ["keyword1", "keyword2"]}}
-        ]
-    }}
-    Input text:
-    {text[:4000]}
-    """
+    prompt = f"""You are a task-understanding assistant for an intelligence-gathering system. 
+Read the input below and figure out what the user actually wants — do not just copy words as targets.
+
+There are exactly two possible pipeline types:
+
+1. "lead_scout" — the user wants to find Indian companies/organizations related to a topic, 
+   industry, or set of keywords. Example: "counter-drone companies in India", "fintech startups Bangalore", 
+   "EV battery manufacturers". In this case:
+   - "target" should be a SEARCH TOPIC (e.g. "counter-drone technology companies India"), 
+     NOT a literal keyword string.
+   - Generate targets that will surface real Indian companies — think about how you'd search for this 
+     (industry associations, "top N companies in X India", sector-specific directories, news coverage).
+   - keywords should be the specific attributes to extract for each company found 
+     (e.g. ["founder", "headquarters", "funding", "contact"]).
+
+2. "personal_audit" — the user wants a background check / due-diligence profile on a SPECIFIC named 
+   person or a specific single company (not a topic/sector). Example: "background check on Rohan Mehta, 
+   CEO of XYZ Ltd", "audit ABC Pvt Ltd". In this case:
+   - "target" is the exact name of the person or company.
+   - keywords should be the specific things to find (e.g. ["past companies", "legal disputes", 
+     "directorships", "social media presence"]).
+
+DECISION RULE:
+- If the input names a sector/topic/industry without one specific named entity → pipeline = "lead_scout".
+- If the input names one specific person or one specific company to investigate → pipeline = "personal_audit".
+- If ambiguous, default to "lead_scout" and note the ambiguity in "reasoning".
+
+Do not invent companies or people that aren't implied by the input — you're deciding STRATEGY, not 
+fabricating results. The actual entities will be found later by the crawler.
+
+Return ONLY this JSON object. No markdown fences, no explanation before or after:
+{{
+    "pipeline": "lead_scout|personal_audit",
+    "reasoning": "one sentence explaining why you picked this pipeline",
+    "jobs": [
+        {{"target": "search topic OR exact entity name", "keywords": ["attribute1", "attribute2"]}}
+    ]
+}}
+
+Input text:
+{text[:4000]}"""
+
     try:
-        response = ollama.chat(model=Config.OLLAMA_MODEL, messages=[{'role': 'user', 'content': prompt}])
+        response = ollama.chat(
+            model=Config.OLLAMA_MODEL, 
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json'
+        )
         output = response['message']['content']
-        start = output.find('{')
-        end = output.rfind('}') + 1
-        if start != -1 and end != -1:
-            return json.loads(output[start:end]).get("jobs", [])
+        result = json.loads(output)
+        return result.get("pipeline", "lead_scout"), result.get("jobs", [])
     except Exception as e:
         print("Error parsing with AI:", e)
-    return []
+        return "lead_scout", []
 
-def enqueue_jobs(jobs):
-    for job in jobs:
+from fastapi import BackgroundTasks
+
+def process_input_background(parent_job_id: str, text: str, source_type: str):
+    state_manager.set_job_state(parent_job_id, "manual_run", "IN_PROGRESS", source_type, {"step": "analyzing_prompt_with_AI"})
+    
+    # Run the heavy LLM extraction
+    pipeline, jobs = extract_targets_from_text(text)
+    
+    if not jobs:
+        state_manager.set_job_state(parent_job_id, pipeline, "FAILED", source_type, {"step": "analyzing_prompt_with_AI", "error": "No valid targets extracted from input."})
+        return
+
+    # Dispatch actual Celery tasks for each found target
+    for i, job in enumerate(jobs):
         job_id = f"manual_{uuid.uuid4().hex[:8]}"
         target = job.get("target")
         keywords = job.get("keywords", [])
         if target:
-            # Immediately register the job as QUEUED so the dashboard shows it
-            state_manager.set_job_state(job_id, "manual_run", "QUEUED", target, {"step": "queued", "keywords": keywords})
-            celery_app.send_task("tasks.ai_query_generator.generate_queries", args=[
-                job_id, 
-                "manual_run", 
-                target, 
-                keywords
-            ])
+            state_manager.set_job_state(job_id, pipeline, "QUEUED", target, {"step": "queued", "keywords": keywords})
+            
+            if pipeline == "lead_scout":
+                # topic-based search -> dorking engine finds multiple companies
+                celery_app.send_task("tasks.ai_query_generator.generate_queries", args=[
+                    job_id, pipeline, target, keywords
+                ])
+            else:  # personal_audit
+                # specific entity -> direct crawl
+                celery_app.send_task("tasks.crawl.execute_crawl", args=[
+                    job_id, pipeline, target, keywords
+                ])
+            
+    # Mark parent wrapper job as complete
+    state_manager.set_job_state(parent_job_id, pipeline, "COMPLETED", source_type, {"step": "prompt_parsed", "targets_found": len(jobs), "pipeline_chosen": pipeline})
+
 
 @app.post("/api/start_job/prompt")
 async def start_job_prompt(prompt: str = Form(...)):
-    # Run sync Ollama call in a thread so it doesn't block the event loop
+    parent_job_id = f"prompt_{uuid.uuid4().hex[:8]}"
+    # Register immediately so it shows on dashboard
+    state_manager.set_job_state(parent_job_id, "manual_run", "QUEUED", prompt[:50] + "...", {"step": "queued"})
+    
+    # Fire and forget the heavy LLM parsing in a separate thread so it doesn't block ASGI response
     loop = asyncio.get_event_loop()
-    jobs = await loop.run_in_executor(None, extract_targets_from_text, prompt)
-    enqueue_jobs(jobs)
-    return {"status": "started", "jobs": len(jobs)}
+    loop.run_in_executor(None, process_input_background, parent_job_id, prompt, "User Prompt")
+    
+    return {"status": "started", "job_id": parent_job_id}
 
 @app.post("/api/start_job/csv")
 async def start_job_csv(file: UploadFile = File(...)):
     contents = await file.read()
     text = contents.decode('utf-8', errors='ignore')
-    # Run sync Ollama call in a thread so it doesn't block the event loop
+    
+    parent_job_id = f"csv_{uuid.uuid4().hex[:8]}"
+    state_manager.set_job_state(parent_job_id, "manual_run", "QUEUED", file.filename, {"step": "queued"})
+    
     loop = asyncio.get_event_loop()
-    jobs = await loop.run_in_executor(None, extract_targets_from_text, text)
-    enqueue_jobs(jobs)
-    return {"status": "started", "jobs": len(jobs)}
+    loop.run_in_executor(None, process_input_background, parent_job_id, text, f"CSV: {file.filename}")
+    
+    return {"status": "started", "job_id": parent_job_id}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

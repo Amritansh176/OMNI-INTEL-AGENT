@@ -29,38 +29,47 @@ def score_and_gate(self, job_id, pipeline, target, extraction_result, query_stra
         return f"Job {job_id} failed quality gate: {reason}"
 
     # Use a fast LLM call to score the leads
-    prompt = f"""Evaluate these extracted intelligence leads for the target: "{target}"
+    # Get a snippet of the source text to give the AI context for judging hallucinations
+    source_text_snippet = extraction_result.get("text_content", "")[:1500] if isinstance(extraction_result, dict) else ""
+
+    prompt = f"""You are a strict data quality auditor. Score the following extracted leads for the target: "{target}"
+
+Source Text Context (Snippet):
+{source_text_snippet}
 
 Extracted Leads:
 {json.dumps(leads, indent=2)}
 
-Score the data on three metrics (0.0 to 1.0):
-1. completeness: Are the fields (name, organization, contact) actually filled with real data?
-2. relevance: Do these leads match the target "{target}"?
-3. confidence: Are you confident this is not a hallucination or boilerplate?
+Score each metric from 0.0 to 1.0, applying these rules strictly:
+1. completeness: Fraction of leads with 3+ non-empty fields. All-empty or single-field leads score near 0.0.
+2. relevance: Do the organization/name values plausibly relate to "{target}"? Generic or off-topic entities score near 0.0.
+3. confidence: Does this look like real extracted data (specific names, real-looking contacts/titles) or generic placeholder-style text (e.g. "Company Inc.", "info@example.com", "Manager")? Does it match the Source Text Context? Placeholder-looking or fabricated data scores near 0.0.
 
-Return ONLY a valid JSON object:
+Do not be generous — when in doubt, score lower. overall_score should be the average of the three, not a rounded-up value.
+
+Return ONLY this JSON object. No markdown fences, no explanation before or after:
 {{
     "completeness": 0.0,
     "relevance": 0.0,
     "confidence": 0.0,
     "overall_score": 0.0,
-    "reasoning": "brief explanation"
+    "reasoning": "one sentence, max 20 words"
 }}"""
 
     try:
-        response = ollama.chat(model=Config.OLLAMA_MODEL, messages=[
-            {'role': 'user', 'content': prompt}
-        ])
-
+        response = ollama.chat(
+            model=Config.OLLAMA_MODEL, 
+            messages=[{'role': 'user', 'content': prompt}],
+            format='json'
+        )
+        
         output_text = response['message']['content']
-        start = output_text.find('{')
-        end = output_text.rfind('}') + 1
-        if start != -1 and end > start:
-            scores = json.loads(output_text[start:end])
-        else:
-            # Fallback to a simple heuristic score if JSON parsing fails
-            scores = {"overall_score": 0.5, "reasoning": "Failed to parse AI score"}
+        
+        # Parse the output
+        try:
+            scores = json.loads(output_text)
+        except json.JSONDecodeError:
+            scores = {"completeness": 0, "relevance": 0, "confidence": 0, "overall_score": 0, "reasoning": "Failed to parse JSON"}
 
     except Exception as e:
         scores = {"overall_score": 0.5, "reasoning": f"Scoring error: {str(e)}"}
