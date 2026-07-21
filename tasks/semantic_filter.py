@@ -127,7 +127,10 @@ def filter_and_chunk(self, job_id, pipeline, target, raw_data, keywords=None,
 
     # Handle different raw_data formats
     if isinstance(raw_data, dict):
-        html_or_text = raw_data.get("html", raw_data.get("text", ""))
+        if "results" in raw_data and isinstance(raw_data["results"], list):
+            html_or_text = "\n\n".join(raw_data["results"])
+        else:
+            html_or_text = raw_data.get("html", raw_data.get("text", ""))
         interesting_links = raw_data.get("interesting_links", [])
         source = raw_data.get("source", "unknown")
     elif isinstance(raw_data, str):
