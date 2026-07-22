@@ -316,7 +316,7 @@ Return ONLY this JSON object. No markdown fences, no explanation before or after
     "thought_process": "Analyze the query here: Does this seem like a request to find new leads (lead_scout) or investigate a specific known entity (personal_audit)?",
     "pipeline": "lead_scout|personal_audit",
     "jobs": [
-        {{"target": "extract the search topic or entity name from the Input text", "keywords": ["attribute1", "attribute2"]}}
+        {{"target": "<Insert the actual entity or topic found in the Input text>", "keywords": ["<keyword1>", "<keyword2>"]}}
     ]
 }}
 

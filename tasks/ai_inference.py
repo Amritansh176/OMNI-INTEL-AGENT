@@ -66,6 +66,13 @@ TASK:
 1. Extract every identifiable lead (person, company, or organization) from the text below.
 2. For any field not explicitly stated in the text, use an empty string "" — never guess, never fabricate an email/phone/name.
 3. Assess whether the extracted data is complete enough to stop, or whether more crawling/searching is needed.
+4. Carefully evaluate and assign a 'confidence' score between 0.0 and 1.0. Think step-by-step about what was extracted:
+   - 0.9 to 1.0: Extremely high confidence. Found full names, organization, and concrete contact info (email/phone).
+   - 0.7 to 0.8: High confidence. Found a clear organization name and maybe a person's name, but missing direct contact details.
+   - 0.4 to 0.6: Moderate confidence. Found vague entities, partial names, or data that might just be boilerplate/irrelevant.
+   - 0.1 to 0.3: Low confidence. Extracted data is very ambiguous or likely incorrect.
+   - 0.0: Absolutely nothing was found.
+   Explain your thought process in 'confidence_reasoning' before assigning the score.
 
 Return ONLY this JSON object. No markdown fences, no reasoning text, no commentary before or after:
 {{
@@ -78,6 +85,7 @@ Return ONLY this JSON object. No markdown fences, no reasoning text, no commenta
             "status": ""
         }}
     ],
+    "confidence_reasoning": "your step-by-step thought process here",
     "confidence": 0.0,
     "next_action": {{
         "type": "crawl_subpage|search_entity|mutate_query|sufficient",
@@ -141,8 +149,21 @@ Raw Data:
             _send_to_quality_scorer(job_id, pipeline, target, result, query_strategy, parent_job_id)
             return f"Job {job_id}: Max depth {depth} reached. Sending to quality scorer."
 
-        if action_type == "sufficient" or (has_any_real_data and confidence >= 0.5):
-            # AI says data is good enough — send to quality scoring
+        # Calculate a programmatic baseline confidence based on data completeness to prevent LLM self-sabotage
+        baseline_conf = 0.0
+        if leads:
+            max_filled = max(sum(1 for f in ["name", "organization", "designation", "contact", "status"] 
+                               if lead.get(f) and str(lead.get(f)).lower() not in ["", "n/a", "unknown", "null", "none"]) 
+                           for lead in leads)
+            # 1 field = 0.3, 2 fields = 0.6, 3+ fields = 0.9
+            baseline_conf = min(0.9, max_filled * 0.3)
+            
+        if has_any_real_data and confidence < baseline_conf:
+            confidence = baseline_conf
+            result["confidence"] = confidence
+
+        if action_type == "sufficient" or has_any_real_data:
+            # AI says data is good enough or we found real data — send to quality scoring
             state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target,
                                         {"step": "extraction_sufficient", "confidence": confidence, "leads": len(leads)})
             _send_to_quality_scorer(job_id, pipeline, target, result, query_strategy, parent_job_id)
