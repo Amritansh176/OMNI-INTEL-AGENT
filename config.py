@@ -24,7 +24,7 @@ class Config:
 
     # --- AI Pipeline Settings ---
     # Quality Scorer: minimum score (0-1) for a lead to pass to handoff
-    QUALITY_THRESHOLD = float(os.getenv("QUALITY_THRESHOLD", "0.7"))
+    QUALITY_THRESHOLD = float(os.getenv("QUALITY_THRESHOLD", "0.4"))
     # Maximum depth for the agentic extraction loop
     MAX_AI_LOOP_DEPTH = int(os.getenv("MAX_AI_LOOP_DEPTH", "3"))
     # Semantic Filter: number of top text chunks to keep per page

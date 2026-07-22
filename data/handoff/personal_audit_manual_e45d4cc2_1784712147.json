@@ -1,0 +1,25 @@
+{
+    "job_id": "manual_e45d4cc2",
+    "pipeline": "personal_audit",
+    "target": "Open AI CEO",
+    "data": {
+        "leads": [
+            {
+                "name": "Sam Altman",
+                "organization": "OpenAI",
+                "designation": "CEO",
+                "contact": "",
+                "status": "",
+                "source_url": "Open AI CEO"
+            }
+        ],
+        "quality_metrics": {
+            "completeness": 1.0,
+            "relevance": 0.8,
+            "confidence": 0.5,
+            "overall_score": 0.76,
+            "reasoning": "All fields are present; high relevance due to identical target name, though no concrete connection proven in source text"
+        },
+        "query_strategy": null
+    }
+}

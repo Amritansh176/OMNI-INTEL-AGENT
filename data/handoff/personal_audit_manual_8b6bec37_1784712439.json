@@ -1,0 +1,25 @@
+{
+    "job_id": "manual_8b6bec37",
+    "pipeline": "personal_audit",
+    "target": "Aereo",
+    "data": {
+        "leads": [
+            {
+                "name": "Vipul Singh",
+                "organization": "Aereo",
+                "designation": "CEO & Co-Founder",
+                "contact": "",
+                "status": "",
+                "source_url": "Aereo"
+            }
+        ],
+        "quality_metrics": {
+            "completeness": 1.0,
+            "relevance": 0.8,
+            "confidence": 0.5,
+            "overall_score": 0.76,
+            "reasoning": "complete lead data, indirect relevance to Aereo (CEO & Co-Founder), confidence lowered due to missing contact"
+        },
+        "query_strategy": null
+    }
+}

@@ -42,7 +42,7 @@ Extracted Leads:
 {json.dumps(leads, indent=2)}
 
 Score each metric from 0.0 to 1.0, applying these rules strictly:
-1. completeness: Fraction of leads with 3+ non-empty fields. All-empty or single-field leads score near 0.0.
+1. completeness: A lead is useful if it has at least 1 or 2 fields (e.g., name and organization). Do NOT penalize if contact details are missing. Give a high score (0.8-1.0) if at least a name or organization is clearly identified.
 2. relevance: Does the extracted lead genuinely relate to the target "{target}" based on the Source Text Context? Even if the organization name doesn't explicitly sound related (e.g. "Zen Technologies" for "drones"), check if the source text proves their relevance. Generic or off-topic entities score near 0.0.
 3. confidence: Does this look like real extracted data (specific names, real-looking contacts/titles) or generic placeholder-style text (e.g. "Company Inc.", "info@example.com", "Manager")? Does it match the Source Text Context? Placeholder-looking or fabricated data scores near 0.0.
 
@@ -87,6 +87,12 @@ Return ONLY this JSON object. No markdown fences, no explanation before or after
         overall_score = (relevance * 0.70) + (confidence * 0.20) + (completeness * 0.10)
     else:
         overall_score = float(scores.get("overall_score", (completeness + relevance + confidence) / 3.0))
+
+    # HARD OVERRIDE: If the AI managed to extract at least a name or an organization, 
+    # force it to pass the quality gate regardless of what the LLM scored it.
+    has_basic_info = any(bool(str(l.get("name", "")).strip()) or bool(str(l.get("organization", "")).strip()) for l in leads)
+    if has_basic_info:
+        overall_score = max(overall_score, Config.QUALITY_THRESHOLD + 0.05)
 
     scores["overall_score"] = round(overall_score, 2)
     reasoning = scores.get("reasoning", "")

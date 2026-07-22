@@ -34,26 +34,32 @@ class DorkingEngine:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 results = []
+                urls = []
                 for r in soup.find_all('div', class_='algo-sr'):
                     text = r.get_text(separator=' ', strip=True)
+                    a_tag = r.find('a', href=True)
                     if text:
                         results.append(text)
+                        if a_tag:
+                            urls.append(a_tag['href'])
                         if len(results) >= 10:
                             break
-                return results
+                return results, urls
         except Exception as e:
             print(f"Yahoo Sync Error: {e}")
-        return []
+        return [], []
 
     @staticmethod
     def search_google_sync(query):
         results = []
+        urls = []
         try:
             for result in search(query, num_results=5, advanced=True):
                 results.append(f"{result.title} - {result.description}")
+                urls.append(result.url)
         except Exception as e:
             print(f"Google Sync Error: {e}")
-        return results
+        return results, urls
 
     @staticmethod
     def fallback_search(target, keywords):
@@ -69,10 +75,11 @@ class DorkingEngine:
             google_future = executor.submit(DorkingEngine.search_google_sync, query)
             yahoo_future = executor.submit(DorkingEngine.search_yahoo_sync, query)
             
-            google_results = google_future.result()
-            yahoo_results = yahoo_future.result()
+            google_results, google_urls = google_future.result()
+            yahoo_results, yahoo_urls = yahoo_future.result()
             
         all_results = list(set(google_results + yahoo_results))
+        all_urls = list(set(google_urls + yahoo_urls))
         
         if not all_results:
             return None
@@ -80,5 +87,7 @@ class DorkingEngine:
         return {
             "source": "multi_source_dorking",
             "target": target,
-            "results": all_results
+            "text": "\n".join(all_results),
+            "results": all_results,
+            "interesting_links": all_urls
         }

@@ -1,0 +1,25 @@
+{
+    "job_id": "manual_e974a5cd",
+    "pipeline": "lead_scout",
+    "target": "Ministry of Civil Aviation",
+    "data": {
+        "leads": [
+            {
+                "name": "",
+                "organization": "Ministry of Civil Aviation",
+                "designation": "Minister of Civil Aviation",
+                "contact": "Phone No: 24604283, 24695094 | Email: webmaster-moca@gov.in",
+                "status": "",
+                "source_url": "\"Ministry of Civil Aviation\" -site:wikipedia.org (civil OR aviation)"
+            }
+        ],
+        "quality_metrics": {
+            "completeness": 1.0,
+            "relevance": 0.8,
+            "confidence": 0.5,
+            "overall_score": 0.76,
+            "reasoning": "High completeness due to multiple fields, moderate relevance as the lead mentions the target organization, and low confidence due to lack of specific names"
+        },
+        "query_strategy": "news"
+    }
+}
