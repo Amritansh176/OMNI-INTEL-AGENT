@@ -10,6 +10,27 @@ import functools
 import uuid
 import json
 import ollama
+import instructor
+from openai import OpenAI
+from pydantic import BaseModel, Field
+from typing import List, Literal
+
+client = instructor.from_openai(
+    OpenAI(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama",
+    ),
+    mode=instructor.Mode.JSON,
+)
+
+class Job(BaseModel):
+    target: str = Field(description="The actual entity or topic, appending 'in India' if no geography is provided")
+    keywords: List[str]
+
+class RouterDecision(BaseModel):
+    thought_process: str = Field(description="Analyze the query here: Does this seem like a request to find new leads (lead_scout) or investigate a specific known entity (personal_audit)?")
+    pipeline: Literal["lead_scout", "personal_audit"]
+    jobs: List[Job]
 
 app = FastAPI(title="OMNI Intel Agent Dashboard")
 
@@ -302,37 +323,30 @@ async def get():
     return HTMLResponse(html)
 
 def extract_targets_from_text(text: str):
-    prompt = f"""You are a task-understanding assistant for an intelligence-gathering system. 
-Read the input below and figure out what the user actually wants.
+    prompt = f"""You are a brilliant OSINT Task Router. 
+Read the input below and intelligently determine the user's intent.
 
-There are exactly two possible pipeline types:
-1. "lead_scout" — The user wants to FIND NEW entities (companies, startups, people) related to a topic or industry. Example: "counter-drone companies in India", "propeller manufacturers".
-2. "personal_audit" — The user wants to INVESTIGATE an ALREADY KNOWN specific person or specific company. Example: "background check on Rohan Mehta", "audit ABC Pvt Ltd".
+You have two pipelines available:
+1. "personal_audit" — For deep-diving into ONE SPECIFIC target (e.g., a known person, a specific company, or a singular specific role like 'Minister of Civil Aviation').
+2. "lead_scout" — For discovering a LIST of unknown entities based on a broad topic, industry, or keywords (e.g., 'drone companies', 'propeller manufacturers').
 
-CRITICAL: DO NOT copy the examples. You MUST extract the target ONLY from the user's actual Input text.
-
-Return ONLY this JSON object. No markdown fences, no explanation before or after:
-{{
-    "thought_process": "Analyze the query here: Does this seem like a request to find new leads (lead_scout) or investigate a specific known entity (personal_audit)?",
-    "pipeline": "lead_scout|personal_audit",
-    "jobs": [
-        {{"target": "<Insert the actual entity or topic found in the Input text>", "keywords": ["<keyword1>", "<keyword2>"]}}
-    ]
-}}
+Instead of following rigid rules, you must THINK step-by-step in your `thought_process` field:
+- Step 1: Does the user want to investigate a single, specific entity/role, or do they want to discover a list of multiple leads?
+- Step 2: Based on Step 1, which pipeline makes the most logical sense?
+- Step 3: Does the target lack a country/geography? If yes, automatically append "in India" to localize it.
 
 Input text:
 {text[:4000]}"""
 
     try:
-        response = ollama.chat(
+        decision: RouterDecision = client.chat.completions.create(
             model=Config.OLLAMA_MODEL, 
             messages=[{'role': 'user', 'content': prompt}],
-            format='json',
-            options={'timeout': 30}
+            response_model=RouterDecision,
+            max_retries=2
         )
-        output = response['message']['content']
-        result = json.loads(output)
-        return result.get("pipeline", "lead_scout"), result.get("jobs", [])
+        jobs_dict = [job.model_dump() for job in decision.jobs]
+        return decision.pipeline, jobs_dict
     except Exception as e:
         print("Error parsing with AI:", e)
         return "lead_scout", []

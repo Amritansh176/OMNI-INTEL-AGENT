@@ -28,15 +28,22 @@ def check_robots_sitemap(url):
     except Exception as e:
         return False, str(e), False
 
-def crawl_homepage_bfs(url, keywords):
-    """Tier 2: BFS root-level crawling for links with content dedup."""
+def crawl_homepage_clean(url, keywords):
+    """Tier 2: Crawl using Trafilatura for clean boilerplate-free text and BeautifulSoup for link discovery."""
+    import trafilatura
+    
     try:
         resp = requests.get(url, headers=DorkingEngine.get_random_headers(), timeout=10)
         if resp.status_code != 200:
             return None
         
+        # Use Trafilatura to extract clean text (strips menus, footers, etc)
+        text_content = trafilatura.extract(resp.text, include_links=True)
+        
+        # Fallback to BeautifulSoup if Trafilatura fails to extract
         soup = BeautifulSoup(resp.text, 'html.parser')
-        text_content = soup.get_text(separator=' ', strip=True)
+        if not text_content:
+            text_content = soup.get_text(separator=' ', strip=True)
         
         # Deduplication based on SHA-256
         content_hash = hashlib.sha256(text_content.encode('utf-8')).hexdigest()
@@ -48,12 +55,13 @@ def crawl_homepage_bfs(url, keywords):
         links = [a['href'] for a in soup.find_all('a', href=True) if any(kw.lower() in a['href'].lower() for kw in keywords)]
         
         return {
-            "source": "bfs",
+            "source": "trafilatura_clean",
             "url": url,
-            "text": text_content[:5000],
+            "text": text_content[:8000],
             "interesting_links": links
         }
     except Exception as e:
+        print(f"Crawl wrapper error: {e}")
         return None
 
 @app.task(bind=True, name="tasks.crawl.execute_crawl", time_limit=300, soft_time_limit=270)
@@ -91,7 +99,7 @@ def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=
         if missing_fields:
             search_kws.extend(missing_fields)
             
-        raw_data = crawl_homepage_bfs(target, search_kws)
+        raw_data = crawl_homepage_clean(target, search_kws)
         
         if raw_data == "DUPLICATE":
             # If duplicate on a deep crawl, we might want to fallback to dorking instead of skipping
@@ -110,7 +118,11 @@ def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=
         if missing_fields:
             dork_keywords = missing_fields
             
-        raw_data = DorkingEngine.fallback_search(target, dork_keywords)
+        dork_result = DorkingEngine.fallback_search(target, dork_keywords)
+        if dork_result:
+            raw_data = dork_result
+            if "url" not in raw_data and raw_data.get("interesting_links"):
+                raw_data["url"] = raw_data["interesting_links"][0]
         
     if raw_data:
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawl_completed", "depth": depth})

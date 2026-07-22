@@ -62,6 +62,36 @@ class DorkingEngine:
         return results, urls
 
     @staticmethod
+    def search_searxng(query):
+        import random
+        instances = [
+            "https://searx.be/search",
+            "https://paulgo.io/search",
+            "https://search.mdosch.de/search",
+            "https://priv.au/search"
+        ]
+        random.shuffle(instances)
+        results = []
+        urls = []
+        for inst in instances:
+            try:
+                resp = requests.get(inst, params={'q': query, 'format': 'json'}, headers=DorkingEngine.get_random_headers(), timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for r in data.get('results', []):
+                        title = r.get('title', '')
+                        content = r.get('content', '')
+                        url = r.get('url', '')
+                        if title and url:
+                            results.append(f"{title} - {content}")
+                            urls.append(url)
+                    if results:
+                        break # Found results, no need to try next instance
+            except Exception as e:
+                print(f"SearXNG Sync Error ({inst}): {e}")
+        return results, urls
+
+    @staticmethod
     def fallback_search(target, keywords):
         # Add random Jitter to prevent firing concurrent requests at the exact same millisecond
         import time
@@ -71,15 +101,17 @@ class DorkingEngine:
         query = f"{target} {' OR '.join(keywords)}" if keywords else target
         
         # Run Google and Yahoo concurrently. If Google blocks us, it returns [] and we still get Yahoo's results!
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             google_future = executor.submit(DorkingEngine.search_google_sync, query)
             yahoo_future = executor.submit(DorkingEngine.search_yahoo_sync, query)
+            searx_future = executor.submit(DorkingEngine.search_searxng, query)
             
             google_results, google_urls = google_future.result()
             yahoo_results, yahoo_urls = yahoo_future.result()
+            searx_results, searx_urls = searx_future.result()
             
-        all_results = list(set(google_results + yahoo_results))
-        all_urls = list(set(google_urls + yahoo_urls))
+        all_results = list(set(google_results + yahoo_results + searx_results))
+        all_urls = list(set(google_urls + yahoo_urls + searx_urls))
         
         if not all_results:
             return None
