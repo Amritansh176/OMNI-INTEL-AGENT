@@ -321,15 +321,29 @@ async def get():
     return HTMLResponse(html)
 
 def extract_targets_from_text(text: str):
-    prompt = f"""Route this OSINT task to the correct pipeline.
+    prompt = f"""You are an OSINT task router. You must classify the input into exactly ONE pipeline by REASONING through these questions.
 
-Pipelines:
-1. "personal_audit" — Investigate ONE specific target (person, company, role).
-2. "lead_scout" — Discover a LIST of unknown entities for a broad topic/industry.
+AVAILABLE PIPELINES:
+- "personal_audit": Deep investigation of a single, identifiable target.
+- "lead_scout": Discovery search to find multiple unknown entities.
 
-Think step-by-step:
-- Is this about one specific entity or a broad search for many?
-- If no country mentioned, append "in India" to the target.
+REASONING FRAMEWORK — Answer these 4 questions in your thought_process:
+
+Q1: SINGULARITY TEST — If I searched this, would I expect to find ONE specific entity or a LIST of many?
+   → One specific result = personal_audit
+   → A list of multiple results = lead_scout
+
+Q2: NOUN TEST — Is the core noun SINGULAR (a person, a title, a named org) or PLURAL/CATEGORICAL (an industry, a type, a class)?
+   → Singular/named = personal_audit
+   → Plural/categorical = lead_scout
+
+Q3: IDENTITY TEST — Could I point to this in the real world and say "THAT is the one"? Or is it a description of a group?
+   → Pointable = personal_audit
+   → Group description = lead_scout
+
+Q4: GEOGRAPHY — Does the input lack a country, city, or region? If yes AND the topic involves government/politics/business, append "in India" to the target.
+
+Use ALL 4 questions to reason. Do not rely on keyword matching. Think about the user's INTENT.
 
 Input: {text[:4000]}"""
 

@@ -4,6 +4,7 @@ import urllib.parse
 from googlesearch import search
 from fake_useragent import UserAgent
 import concurrent.futures
+import re
 
 class DorkingEngine:
     # Initialize fake-useragent for stealth
@@ -26,6 +27,25 @@ class DorkingEngine:
         }
 
     @staticmethod
+    def clean_redirect_url(url):
+        """Extract the real destination URL from Yahoo/Google redirect wrappers."""
+        # Yahoo redirect: extract /RU=<encoded_url>/
+        yahoo_match = re.search(r'/RU=(https?[^/]+)/', url)
+        if yahoo_match:
+            return urllib.parse.unquote(yahoo_match.group(1))
+        
+        # Google redirect: extract url= parameter
+        if 'google.com/url' in url:
+            parsed = urllib.parse.urlparse(url)
+            params = urllib.parse.parse_qs(parsed.query)
+            if 'url' in params:
+                return params['url'][0]
+            if 'q' in params:
+                return params['q'][0]
+        
+        return url
+
+    @staticmethod
     def search_yahoo_sync(query):
         url = "https://search.yahoo.com/search"
         try:
@@ -41,7 +61,8 @@ class DorkingEngine:
                     if text:
                         results.append(text)
                         if a_tag:
-                            urls.append(a_tag['href'])
+                            clean_url = DorkingEngine.clean_redirect_url(a_tag['href'])
+                            urls.append(clean_url)
                         if len(results) >= 10:
                             break
                 return results, urls
@@ -112,6 +133,11 @@ class DorkingEngine:
             
         all_results = list(set(google_results + yahoo_results + searx_results))
         all_urls = list(set(google_urls + yahoo_urls + searx_urls))
+        
+        # Clean all redirect URLs
+        all_urls = [DorkingEngine.clean_redirect_url(u) for u in all_urls]
+        # Remove duplicate URLs after cleaning
+        all_urls = list(set(all_urls))
         
         if not all_results:
             return None

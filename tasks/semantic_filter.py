@@ -147,8 +147,8 @@ def filter_and_chunk(self, job_id, pipeline, target, raw_data, keywords=None,
         clean_soup = strip_boilerplate(html_or_text)
         chunks = chunk_by_sections(clean_soup)
     else:
-        # Already plain text (e.g., from dorking results)
-        chunks = [{"tag": "text", "text": html_or_text[:2000], "length": len(html_or_text)}]
+        # Already plain text (e.g., from dorking results or deep crawl)
+        chunks = [{"tag": "text", "text": html_or_text[:5000], "length": len(html_or_text)}]
 
     # Score and sort chunks by relevance
     for chunk in chunks:

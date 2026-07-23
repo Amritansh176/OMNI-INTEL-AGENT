@@ -44,14 +44,31 @@ def is_low_value_content(text_content):
     return any(b in text_content.lower() for b in boilerplate)
 
 
-def deduplicate_leads(leads):
-    """Remove duplicate leads based on (name, organization) tuple."""
+def deduplicate_leads(leads, target=""):
+    """Remove duplicate leads and reject leads that just repeat the target name."""
     seen = set()
     unique = []
+    target_lower = target.strip().lower()
+    
     for lead in leads:
-        key = (lead.get("name", "").strip().lower(), lead.get("organization", "").strip().lower())
-        if key == ("", ""):
+        name = lead.get("name", "").strip().lower()
+        org = lead.get("organization", "").strip().lower()
+        
+        # Skip leads with no identity at all
+        if not name and not org:
             continue
+        
+        # Skip leads where name is just the target query repeated
+        if name and target_lower and name == target_lower:
+            # Only skip if no OTHER useful fields were extracted
+            has_other_data = any(
+                str(lead.get(f, "")).strip() 
+                for f in ["designation", "contact"]
+            )
+            if not has_other_data:
+                continue
+        
+        key = (name, org)
         if key not in seen:
             seen.add(key)
             unique.append(lead)
@@ -98,10 +115,18 @@ Source URL: {source_url}
 {links_preview}
 
 Text:
-{text_content[:4000]}
+{text_content[:5000]}
 
-TASK: Read the text above. If it contains ANY real people, companies, or contacts related to the target, set has_useful_data=true and extract them into leads. If the page is useless, set has_useful_data=false and choose next_action: "crawl_subpage" (pick a URL from Links) or "mutate_query" (try different search).
-Do NOT fabricate data. Leave fields empty if unknown."""
+EXTRACTION RULES:
+1. Extract REAL PEOPLE (names like "Rammohan Naidu", "Rajiv Bansal"), their designations (Minister, CEO, Director), organizations, and contact info.
+2. DO NOT use the target query itself as a lead name. "{target}" is NOT a person — find actual people mentioned IN the text.
+3. Each lead must have at least a real person name OR a real company name that is different from the target query.
+4. If the text mentions designations/roles (Minister, Secretary, Director), extract the PERSON holding that role, not the role itself.
+5. Look for: names, email addresses, phone numbers, LinkedIn profiles, job titles, department heads.
+6. Leave fields EMPTY (not "N/A" or "unknown") if not found.
+7. Set confidence LOW (0.1-0.3) if you only found generic info and no specific people/contacts.
+
+If the page is useless or irrelevant, set has_useful_data=false."""
 
     try:
         report: IntelligenceReport = query_llm(prompt, IntelligenceReport, max_retries=2)
@@ -147,8 +172,8 @@ Do NOT fabricate data. Leave fields empty if unknown."""
                 lead_dict["source_url"] = source_url
                 leads.append(lead_dict)
 
-        # Deduplicate
-        leads = deduplicate_leads(leads)
+        # Deduplicate and reject target-name-as-lead
+        leads = deduplicate_leads(leads, target=target)
 
         # Boost confidence based on filled fields
         confidence = report.confidence

@@ -12,28 +12,74 @@ from typing import Type, TypeVar
 T = TypeVar("T", bound=BaseModel)
 
 
+def _build_schema_description(schema: dict, defs: dict = None) -> str:
+    """
+    Recursively build a human-readable JSON schema description
+    that handles nested models, arrays, and $ref pointers.
+    """
+    if defs is None:
+        defs = schema.get("$defs", {})
+    
+    lines = []
+    properties = schema.get("properties", {})
+    
+    for name, prop in properties.items():
+        desc = prop.get("description", "")
+        
+        # Handle $ref (nested model reference)
+        if "$ref" in prop:
+            ref_name = prop["$ref"].split("/")[-1]
+            ref_schema = defs.get(ref_name, {})
+            nested = _build_schema_description(ref_schema, defs)
+            lines.append(f'  "{name}": (object) {desc} — {nested}')
+        
+        # Handle array with items
+        elif prop.get("type") == "array" and "items" in prop:
+            items = prop["items"]
+            if "$ref" in items:
+                ref_name = items["$ref"].split("/")[-1]
+                ref_schema = defs.get(ref_name, {})
+                nested = _build_schema_description(ref_schema, defs)
+                lines.append(f'  "{name}": (array of objects) {desc} — each item: {nested}')
+            else:
+                item_type = items.get("type", "any")
+                lines.append(f'  "{name}": (array of {item_type}) {desc}')
+        
+        # Handle enum / Literal
+        elif "enum" in prop:
+            options = ", ".join([f'"{v}"' for v in prop["enum"]])
+            lines.append(f'  "{name}": (one of [{options}]) {desc}')
+        
+        # Handle anyOf (e.g., Optional, Literal)
+        elif "anyOf" in prop:
+            any_types = []
+            for opt in prop["anyOf"]:
+                if "enum" in opt:
+                    any_types.extend([f'"{v}"' for v in opt["enum"]])
+                elif "type" in opt:
+                    any_types.append(opt["type"])
+            if any_types:
+                lines.append(f'  "{name}": (one of [{", ".join(any_types)}]) {desc}')
+            else:
+                lines.append(f'  "{name}": {desc}')
+        
+        else:
+            ftype = prop.get("type", "any")
+            lines.append(f'  "{name}": ({ftype}) {desc}')
+    
+    return "{" + ", ".join(lines) + "}"
+
+
 def query_llm(prompt: str, response_model: Type[T], max_retries: int = 2) -> T:
     """
     Send a prompt to the local Ollama model and return a validated Pydantic object.
     Uses ollama.chat(format='json') directly — no instructor/openai overhead.
-    
-    Args:
-        prompt: The user prompt to send.
-        response_model: A Pydantic BaseModel class to validate the JSON output.
-        max_retries: Number of retries on validation failure.
-    
-    Returns:
-        An instance of response_model populated from the LLM's JSON output.
     """
     # Build a system message that tells the LLM what JSON schema to produce
     schema = response_model.model_json_schema()
-    field_descriptions = []
-    for name, prop in schema.get("properties", {}).items():
-        desc = prop.get("description", "")
-        ftype = prop.get("type", "any")
-        field_descriptions.append(f'  "{name}": ({ftype}) {desc}')
+    schema_desc = _build_schema_description(schema)
     
-    schema_hint = "You MUST respond with ONLY valid JSON matching this exact schema (use lowercase keys):\n{\n" + ",\n".join(field_descriptions) + "\n}"
+    schema_hint = f"You MUST respond with ONLY valid JSON matching this exact schema (use lowercase keys):\n{schema_desc}"
 
     last_error = None
     for attempt in range(max_retries + 1):

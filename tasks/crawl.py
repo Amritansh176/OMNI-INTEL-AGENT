@@ -45,6 +45,9 @@ def crawl_homepage_clean(url, keywords):
         if not text_content:
             text_content = soup.get_text(separator=' ', strip=True)
         
+        if not text_content or len(text_content.strip()) < 100:
+            return None
+        
         # Deduplication based on SHA-256
         content_hash = hashlib.sha256(text_content.encode('utf-8')).hexdigest()
         is_duplicate = state_manager.check_and_add_hash(content_hash)
@@ -64,7 +67,73 @@ def crawl_homepage_clean(url, keywords):
         print(f"Crawl wrapper error: {e}")
         return None
 
-@app.task(bind=True, name="tasks.crawl.execute_crawl", time_limit=120, soft_time_limit=100)
+
+def deep_crawl_top_urls(urls, keywords, max_urls=3):
+    """
+    Actually crawl the top URLs from dorking results to get REAL page content.
+    This is the key accuracy improvement — instead of sending search snippets to AI,
+    we send actual webpage content.
+    """
+    import trafilatura
+    
+    crawled_pages = []
+    all_links = []
+    
+    for url in urls[:max_urls]:
+        try:
+            # Skip non-HTTP URLs
+            if not url.startswith("http"):
+                continue
+            
+            # Skip PDFs and other binary files
+            if any(url.lower().endswith(ext) for ext in ['.pdf', '.zip', '.xlsx', '.docx', '.pptx']):
+                continue
+                
+            resp = requests.get(url, headers=DorkingEngine.get_random_headers(), timeout=10, allow_redirects=True)
+            if resp.status_code != 200:
+                continue
+            
+            # Extract clean text via trafilatura
+            text = trafilatura.extract(resp.text, include_links=True)
+            if not text:
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                text = soup.get_text(separator=' ', strip=True)
+            
+            if text and len(text.strip()) > 200:
+                # Dedup check
+                content_hash = hashlib.sha256(text.encode('utf-8')).hexdigest()
+                if not state_manager.check_and_add_hash(content_hash):
+                    crawled_pages.append({"url": url, "text": text[:5000]})
+                    
+                    # Also grab interesting links from the page
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    page_links = [a['href'] for a in soup.find_all('a', href=True) 
+                                  if any(kw.lower() in a.get('href', '').lower() for kw in 
+                                         (keywords + ['about', 'team', 'contact', 'leadership', 'director', 'management']))]
+                    all_links.extend(page_links[:5])
+                    
+        except Exception as e:
+            print(f"Deep crawl error for {url}: {e}")
+            continue
+    
+    if not crawled_pages:
+        return None
+    
+    # Merge all crawled page texts
+    merged_text = "\n\n--- PAGE BREAK ---\n\n".join(
+        [f"[Source: {p['url']}]\n{p['text']}" for p in crawled_pages]
+    )
+    
+    return {
+        "source": "deep_crawl",
+        "url": crawled_pages[0]["url"],
+        "text": merged_text[:12000],
+        "interesting_links": list(set(all_links)),
+        "pages_crawled": len(crawled_pages)
+    }
+
+
+@app.task(bind=True, name="tasks.crawl.execute_crawl", time_limit=180, soft_time_limit=160)
 def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=None, 
                   depth=0, original_target=None, query_strategy=None, parent_job_id=None):
     """
@@ -110,7 +179,7 @@ def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=
                 return f"Job {job_id} skipped: duplicate HTML content."
     
     if not raw_data:
-        # Tier 3 - Dorking
+        # Tier 3 - Dorking → then Deep Crawl the found URLs
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawling", "tier": 3, "depth": depth})
         
         # If we have missing fields, tailor the dorking query
@@ -120,13 +189,30 @@ def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=
             
         dork_result = DorkingEngine.fallback_search(target, dork_keywords)
         if dork_result:
-            raw_data = dork_result
-            if "url" not in raw_data and raw_data.get("interesting_links"):
-                raw_data["url"] = raw_data["interesting_links"][0]
+            found_urls = dork_result.get("interesting_links", [])
+            
+            if found_urls:
+                # DEEP CRAWL: Actually visit the top URLs to get real page content
+                state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, 
+                    {"step": "deep_crawling_urls", "tier": "3b", "urls_found": len(found_urls)})
+                
+                crawl_keywords = keywords if keywords else [target]
+                deep_result = deep_crawl_top_urls(found_urls, crawl_keywords, max_urls=3)
+                
+                if deep_result:
+                    raw_data = deep_result
+                else:
+                    # Fallback: use dorking snippets if deep crawl failed
+                    raw_data = dork_result
+                    if "url" not in raw_data and found_urls:
+                        raw_data["url"] = found_urls[0]
+            else:
+                # No URLs found, use dorking text snippets as fallback
+                raw_data = dork_result
         
     if raw_data:
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target, {"step": "crawl_completed", "depth": depth})
-        # Send to Semantic Filter instead of AI Extractor
+        # Send to Semantic Filter
         app.send_task("tasks.semantic_filter.filter_and_chunk", args=[
             job_id, pipeline, target, raw_data
         ], kwargs={
