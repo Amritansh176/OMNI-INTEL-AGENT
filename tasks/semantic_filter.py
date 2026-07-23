@@ -113,7 +113,7 @@ def score_chunk_relevance(chunk_text, keywords):
     return min(keyword_coverage * 0.5 + density_bonus * 0.3 + pattern_bonus, 1.0)
 
 
-@app.task(bind=True, name="tasks.semantic_filter.filter_and_chunk", time_limit=300, soft_time_limit=270)
+@app.task(bind=True, name="tasks.semantic_filter.filter_and_chunk", time_limit=120, soft_time_limit=100)
 def filter_and_chunk(self, job_id, pipeline, target, raw_data, keywords=None, 
                      depth=0, original_target=None, query_strategy=None, parent_job_id=None):
     """

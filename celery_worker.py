@@ -27,7 +27,8 @@ app.conf.update(
     timezone="UTC",
     enable_utc=True,
     task_acks_late=True, # Ensure tasks are ack'd after execution to prevent drops
-    worker_prefetch_multiplier=1 # Recommended for long running tasks
+    worker_prefetch_multiplier=1, # Recommended for long running tasks
+    worker_concurrency=2, # Ollama serves 1 inference at a time; 2 workers = 1 LLM + 1 fast task
 )
 
 # Removed task_routes so all tasks default to the 'celery' queue. 

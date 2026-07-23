@@ -1,90 +1,74 @@
 """
-Phase 1: AI-Driven Dynamic Query Generation
-Instead of hardcoded dorking strings, LLaMA generates diverse, adaptive search queries.
+Phase 1: AI-Driven Query Generation (Optimized)
+Uses Pydantic-validated output and shorter prompts for speed.
 """
 from celery_worker import app
 from state_manager import state_manager
 from feedback_store import feedback_store
 from config import Config
-import ollama
-import json
+from ollama_client import query_llm
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Any
 
 
-@app.task(bind=True, name="tasks.ai_query_generator.generate_queries", time_limit=300, soft_time_limit=270)
+class SearchQuery(BaseModel):
+    query: str = Field(description="The search query string")
+    strategy: str = Field(description="google_dork | linkedin | direct_url | news")
+
+class QueryPlan(BaseModel):
+    queries: List[SearchQuery] = Field(default_factory=list, description="List of search queries")
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize(cls, data: Any):
+        if isinstance(data, dict):
+            data = {k.lower(): v for k, v in data.items()}
+            # Handle LLM returning a flat list instead of {"queries": [...]}
+            if "queries" not in data and isinstance(data, dict):
+                # Check if keys look like list items
+                for key in list(data.keys()):
+                    if isinstance(data[key], list) and len(data[key]) > 0:
+                        data["queries"] = data[key]
+                        break
+        elif isinstance(data, list):
+            return {"queries": data}
+        return data
+
+
+@app.task(bind=True, name="tasks.ai_query_generator.generate_queries", time_limit=600, soft_time_limit=570)
 def generate_queries(self, job_id, pipeline, target, keywords=None, depth=0, original_target=None):
     """
-    Uses LLaMA to dynamically generate diverse search queries for a target.
-    Feeds successful past patterns into the prompt so the AI learns over time.
+    Uses LLM to generate diverse search queries. Feeds past patterns for learning.
     """
     actual_target = original_target or target
-    # If the job was cancelled by the user, abort early
     if not state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", target, {"step": "generating_queries", "depth": depth}):
         return f"Job {job_id} cancelled."
 
     # Build context from feedback store
-    past_successes = feedback_store.get_successful_patterns(limit=5)
-    past_failures = feedback_store.get_failed_patterns(limit=3)
-    top_sites = feedback_store.get_top_sites(limit=5)
+    past_successes = feedback_store.get_successful_patterns(limit=3)
+    past_failures = feedback_store.get_failed_patterns(limit=2)
 
-    success_context = ""
+    context_parts = []
     if past_successes:
-        examples = [f'- Query: "{p["query"]}" (strategy: {p["strategy"]}, score: {p["score"]})' for p in past_successes[:3]]
-        success_context = f"\n\nThese query patterns worked well in the past:\n" + "\n".join(examples)
-
-    failure_context = ""
+        examples = [f'- "{p["query"]}" (score: {p["score"]})' for p in past_successes]
+        context_parts.append("Past successes:\n" + "\n".join(examples))
     if past_failures:
-        bad_examples = [f'- Query: "{p["query"]}" failed because: {p["reason"]}' for p in past_failures[:3]]
-        failure_context = f"\n\nAvoid these patterns that failed before:\n" + "\n".join(bad_examples)
+        bad = [f'- "{p["query"]}" failed: {p["reason"][:50]}' for p in past_failures]
+        context_parts.append("Avoid these:\n" + "\n".join(bad))
 
-    site_context = ""
-    if top_sites:
-        sites = [f"- {site} (reliability score: {score})" for site, score in top_sites[:3]]
-        site_context = f"\n\nThese websites have historically provided reliable data:\n" + "\n".join(sites)
+    keyword_hint = f"\nFocus on: {', '.join(keywords)}" if keywords else ""
+    context = "\n".join(context_parts)
 
-    keyword_hint = ""
-    if keywords:
-        keyword_hint = f"\nSpecifically focus on finding: {', '.join(keywords)}"
-
-    prompt = f"""You are an expert OSINT query strategist. Generate exactly {Config.AI_QUERY_COUNT} diverse search queries to find intelligence about: "{target}"
+    prompt = f"""Generate {Config.AI_QUERY_COUNT} diverse search queries for: "{target}"
 {keyword_hint}
-{success_context}
-{failure_context}
-{site_context}
+{context}
 
-Each query should use a DIFFERENT strategy. Return ONLY a valid JSON array:
-[
-    {{"query": "the actual search string", "strategy": "google_dork|linkedin|direct_url|news|academic|social_media"}},
-    ...
-]
-
-Strategies to use:
-- google_dork: Use Google dork syntax like site:, inurl:, intitle:, filetype:
-- linkedin: Target LinkedIn profiles/companies
-- direct_url: Guess likely URLs (e.g., company websites, about pages)
-- news: Search news articles and press releases
-- social_media: Target Twitter/X, Facebook company pages
-
-Be creative and specific. Do NOT use generic queries."""
+Use different strategies: google_dork (site:, intitle:, filetype:), linkedin, direct_url, news.
+Be specific and creative."""
 
     try:
-        response = ollama.chat(
-            model=Config.OLLAMA_MODEL, 
-            messages=[{'role': 'user', 'content': prompt}],
-            format='json',
-            options={'timeout': 30}
-        )
-
-        output_text = response['message']['content']
-        try:
-            result = json.loads(output_text)
-            if isinstance(result, list):
-                queries = result
-            elif isinstance(result, dict) and "queries" in result:
-                queries = result["queries"]
-            else:
-                queries = []
-        except json.JSONDecodeError:
-            queries = []
+        plan: QueryPlan = query_llm(prompt, QueryPlan, max_retries=2)
+        queries = [q.model_dump() for q in plan.queries]
 
         if not queries:
             queries = [{"query": f"{actual_target} {' '.join(keywords or [])}", "strategy": "basic"}]
@@ -92,14 +76,13 @@ Be creative and specific. Do NOT use generic queries."""
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target,
                                     {"step": "queries_generated", "count": len(queries), "depth": depth})
 
-        # Dispatch each query to the crawler in parallel
+        # Dispatch each query to the crawler
         for i, q in enumerate(queries):
             query_str = q.get("query", target)
             strategy = q.get("strategy", "unknown")
             
-            # Send to crawler with the generated query and strategy metadata
             app.send_task("tasks.crawl.execute_crawl", args=[
-                f"{job_id}_q{i}",  # Sub-job ID for each query
+                f"{job_id}_q{i}",
                 pipeline,
                 query_str,
                 keywords,
@@ -110,10 +93,9 @@ Be creative and specific. Do NOT use generic queries."""
                 "parent_job_id": job_id
             })
 
-        return f"Job {job_id}: Generated {len(queries)} AI queries and dispatched to crawler."
+        return f"Job {job_id}: Generated {len(queries)} AI queries and dispatched."
 
     except Exception as e:
-        # On failure, fall back to basic query dispatch
         state_manager.set_job_state(job_id, pipeline, "IN_PROGRESS", actual_target,
                                     {"step": "query_gen_fallback", "error": str(e)})
         app.send_task("tasks.crawl.execute_crawl", args=[

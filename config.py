@@ -30,7 +30,7 @@ class Config:
     # Semantic Filter: number of top text chunks to keep per page
     SEMANTIC_FILTER_TOP_K = int(os.getenv("SEMANTIC_FILTER_TOP_K", "3"))
     # Number of diverse queries the AI Query Generator produces per job
-    AI_QUERY_COUNT = int(os.getenv("AI_QUERY_COUNT", "5"))
+    AI_QUERY_COUNT = int(os.getenv("AI_QUERY_COUNT", "3"))
 
 os.makedirs(Config.HANDOFF_DIR, exist_ok=True)
 os.makedirs(Config.DLQ_DIR, exist_ok=True)

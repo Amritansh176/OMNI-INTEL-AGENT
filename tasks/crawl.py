@@ -64,7 +64,7 @@ def crawl_homepage_clean(url, keywords):
         print(f"Crawl wrapper error: {e}")
         return None
 
-@app.task(bind=True, name="tasks.crawl.execute_crawl", time_limit=300, soft_time_limit=270)
+@app.task(bind=True, name="tasks.crawl.execute_crawl", time_limit=120, soft_time_limit=100)
 def execute_crawl(self, job_id, pipeline, target, keywords=None, missing_fields=None, 
                   depth=0, original_target=None, query_strategy=None, parent_job_id=None):
     """

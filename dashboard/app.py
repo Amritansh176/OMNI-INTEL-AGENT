@@ -10,27 +10,25 @@ import functools
 import uuid
 import json
 import ollama
-import instructor
-from openai import OpenAI
-from pydantic import BaseModel, Field
-from typing import List, Literal
-
-client = instructor.from_openai(
-    OpenAI(
-        base_url="http://localhost:11434/v1",
-        api_key="ollama",
-    ),
-    mode=instructor.Mode.JSON,
-)
+from ollama_client import query_llm
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Literal, Any
 
 class Job(BaseModel):
-    target: str = Field(description="The actual entity or topic, appending 'in India' if no geography is provided")
+    target: str = Field(description="The actual entity or topic")
     keywords: List[str]
 
 class RouterDecision(BaseModel):
-    thought_process: str = Field(description="Analyze the query here: Does this seem like a request to find new leads (lead_scout) or investigate a specific known entity (personal_audit)?")
+    thought_process: str = Field(description="Step-by-step reasoning for pipeline choice")
     pipeline: Literal["lead_scout", "personal_audit"]
     jobs: List[Job]
+
+    @model_validator(mode='before')
+    @classmethod
+    def normalize(cls, data: Any):
+        if isinstance(data, dict):
+            return {k.lower(): v for k, v in data.items()}
+        return data
 
 app = FastAPI(title="OMNI Intel Agent Dashboard")
 
@@ -323,28 +321,20 @@ async def get():
     return HTMLResponse(html)
 
 def extract_targets_from_text(text: str):
-    prompt = f"""You are a brilliant OSINT Task Router. 
-Read the input below and intelligently determine the user's intent.
+    prompt = f"""Route this OSINT task to the correct pipeline.
 
-You have two pipelines available:
-1. "personal_audit" — For deep-diving into ONE SPECIFIC target (e.g., a known person, a specific company, or a singular specific role like 'Minister of Civil Aviation').
-2. "lead_scout" — For discovering a LIST of unknown entities based on a broad topic, industry, or keywords (e.g., 'drone companies', 'propeller manufacturers').
+Pipelines:
+1. "personal_audit" — Investigate ONE specific target (person, company, role).
+2. "lead_scout" — Discover a LIST of unknown entities for a broad topic/industry.
 
-Instead of following rigid rules, you must THINK step-by-step in your `thought_process` field:
-- Step 1: Does the user want to investigate a single, specific entity/role, or do they want to discover a list of multiple leads?
-- Step 2: Based on Step 1, which pipeline makes the most logical sense?
-- Step 3: Does the target lack a country/geography? If yes, automatically append "in India" to localize it.
+Think step-by-step:
+- Is this about one specific entity or a broad search for many?
+- If no country mentioned, append "in India" to the target.
 
-Input text:
-{text[:4000]}"""
+Input: {text[:4000]}"""
 
     try:
-        decision: RouterDecision = client.chat.completions.create(
-            model=Config.OLLAMA_MODEL, 
-            messages=[{'role': 'user', 'content': prompt}],
-            response_model=RouterDecision,
-            max_retries=2
-        )
+        decision: RouterDecision = query_llm(prompt, RouterDecision, max_retries=2)
         jobs_dict = [job.model_dump() for job in decision.jobs]
         return decision.pipeline, jobs_dict
     except Exception as e:
