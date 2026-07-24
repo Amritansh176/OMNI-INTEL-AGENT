@@ -109,24 +109,57 @@ def extract_structured_data(self, job_id, pipeline, target, raw_data, depth=0,
     if missing_fields:
         priority_hint = f"\nPRIORITY fields to find: {', '.join(missing_fields)}"
 
-    prompt = f"""Target: "{target}"
+    pipeline_rules = ""
+    if pipeline == "personal_audit":
+        pipeline_rules = f"""
+4. CRITICAL RULE FOR PERSONAL AUDIT: You are looking for EXACTLY the person holding the role or name specified in the TARGET: "{target}".
+   - Do NOT extract random people from the page.
+   - If the target specifies a designation (e.g., "Secretary", "CEO"), you MUST extract ONLY the person who holds that specific designation. Ignore deputies, joint secretaries, or other associated people.
+"""
+    else:
+        pipeline_rules = f"""
+4. RULE FOR LEAD SCOUTING: "{target}" itself is a topic/industry. Find people MENTIONED IN the text who are ASSOCIATED with "{target}".
+   - Extract relevant leadership, founders, or key contacts.
+"""
+
+    prompt = f"""You are an expert OSINT data extractor for an INDIA-FOCUSED intelligence system. Extract ACTIONABLE intelligence about REAL INDIAN PEOPLE from crawled web content.
+
+TARGET: "{target}"
 Source URL: {source_url}
 {priority_hint}
 {links_preview}
 
-Text:
-{text_content[:5000]}
+=== PAGE CONTENT ===
+{text_content[:6000]}
+=== END CONTENT ===
 
-EXTRACTION RULES:
-1. Extract REAL PEOPLE (names like "Rammohan Naidu", "Rajiv Bansal"), their designations (Minister, CEO, Director), organizations, and contact info.
-2. DO NOT use the target query itself as a lead name. "{target}" is NOT a person — find actual people mentioned IN the text.
-3. Each lead must have at least a real person name OR a real company name that is different from the target query.
-4. If the text mentions designations/roles (Minister, Secretary, Director), extract the PERSON holding that role, not the role itself.
-5. Look for: names, email addresses, phone numbers, LinkedIn profiles, job titles, department heads.
-6. Leave fields EMPTY (not "N/A" or "unknown") if not found.
-7. Set confidence LOW (0.1-0.3) if you only found generic info and no specific people/contacts.
+STEP 1 — RELEVANCE CHECK (do this FIRST):
+- Is this page actually about or related to "{target}" in an INDIAN context?
+- If the page is a GENERIC page (Wikipedia main page, search engine homepage, random tool/utility, 404 page, cookie notice), set has_useful_data=false IMMEDIATELY.
+- If the source URL domain has NO relation to the target topic, be extra skeptical.
+- Prioritize INDIAN results.
 
-If the page is useless or irrelevant, set has_useful_data=false."""
+STEP 2 — EXTRACTION RULES (only if page IS relevant):
+1. Extract REAL, NAMED INDIAN PEOPLE — full names like "Rajiv Kumar", "Ashok Gajapathi Raju", not generic roles.
+2. EVERY lead MUST have at minimum: a real person NAME + at least ONE of (organization, designation, contact).
+   - Name-only leads with everything else empty are WORTHLESS. Do NOT include them.
+3. For each person, actively look for:
+   - Organization/Company they work at
+   - Designation/Title
+   - Contact info (email, phone, LinkedIn URL){pipeline_rules}
+5. Leave fields genuinely EMPTY ("") if not found — never write "N/A", "unknown", "not available".
+6. Do NOT fabricate/hallucinate data. Only extract what is explicitly mentioned in the text.
+
+STEP 3 — CONFIDENCE SCORING:
+- 0.8-1.0: Found multiple Indian people with names + orgs + designations + some contacts
+- 0.5-0.7: Found people with names + orgs/designations but no contacts
+- 0.2-0.4: Found only names, very little other data
+- 0.0-0.1: Page is irrelevant or no useful people found
+
+STEP 4 — NEXT ACTION (if has_useful_data is false):
+- "crawl_subpage": If you see a promising link (like /about-us, /team, /leadership, /contact) in the links list — set action_target to that URL
+- "mutate_query": If the page is completely wrong and a different search query would help
+- "extract_data": Default when you found useful leads"""
 
     try:
         report: IntelligenceReport = query_llm(prompt, IntelligenceReport, max_retries=2)
@@ -168,7 +201,10 @@ If the page is useless or irrelevant, set has_useful_data=false."""
         leads = []
         for lead_obj in report.leads:
             lead_dict = lead_obj.model_dump()
-            if any(str(v).strip() for v in lead_dict.values()):
+            # Count how many meaningful fields are filled
+            filled = sum(1 for k, v in lead_dict.items() if k != "status" and str(v).strip())
+            # Enforce minimum fields: must have at least MIN_LEAD_FIELDS filled
+            if filled >= Config.MIN_LEAD_FIELDS:
                 lead_dict["source_url"] = source_url
                 leads.append(lead_dict)
 
@@ -179,8 +215,11 @@ If the page is useless or irrelevant, set has_useful_data=false."""
         confidence = report.confidence
         if leads:
             best_fill = max(sum(1 for v in l.values() if str(v).strip()) for l in leads)
-            baseline_conf = min(0.9, best_fill * 0.25)
+            baseline_conf = min(0.9, best_fill * 0.15)
             confidence = max(confidence, baseline_conf)
+        else:
+            # AI said has_useful_data=true but we filtered out all leads
+            confidence = min(confidence, 0.2)
 
         result = {
             "leads": leads,

@@ -95,7 +95,10 @@ html = """
                 <h1>OMNI Intel Agent Real-Time Dashboard</h1>
                 <p style="margin-top: 5px;">Live pipeline state from Redis.</p>
             </div>
-            <button class="btn" onclick="openModal()">Start Job</button>
+            <div>
+                <button class="btn btn-danger" onclick="cancelAllJobs()" style="margin-right: 10px;">Cancel All</button>
+                <button class="btn" onclick="openModal()">Start Job</button>
+            </div>
         </div>
         
         <div id="startModal" class="modal">
@@ -210,6 +213,21 @@ html = """
                 }
             }
 
+            function cancelAllJobs() {
+                if (confirm('Are you sure you want to cancel ALL ongoing jobs?')) {
+                    fetch('/api/cancel_all', { method: 'POST' })
+                        .then(response => response.json())
+                        .then(data => {
+                            if (data.status === 'success') {
+                                alert(`Successfully cancelled ${data.cancelled_count} jobs.`);
+                            } else {
+                                alert('Failed to cancel jobs');
+                            }
+                        })
+                        .catch(err => alert('Error cancelling jobs'));
+                }
+            }
+
             async function submitPrompt(e) {
                 e.preventDefault();
                 const prompt = document.getElementById('promptInput').value;
@@ -321,29 +339,40 @@ async def get():
     return HTMLResponse(html)
 
 def extract_targets_from_text(text: str):
-    prompt = f"""You are an OSINT task router. You must classify the input into exactly ONE pipeline by REASONING through these questions.
+    prompt = f"""You are an OSINT task router for an INDIA-FOCUSED intelligence system. Classify the input into exactly ONE pipeline.
+
+IMPORTANT: ALL targets are in INDIA. Always append "India" context to targets unless a specific country is mentioned.
 
 AVAILABLE PIPELINES:
-- "personal_audit": Deep investigation of a single, identifiable target.
-- "lead_scout": Discovery search to find multiple unknown entities.
 
-REASONING FRAMEWORK — Answer these 4 questions in your thought_process:
+1. "personal_audit" — Finding a SPECIFIC PERSON who holds a KNOWN ROLE or DESIGNATION.
+   USE WHEN: The user asks about a specific designation, title, role, person name, or named organization.
+   EXAMPLES:
+   - "CEO of Infosys" → personal_audit, target: "CEO Infosys India", keywords: ["chief executive officer", "managing director", "leadership"]
+   - "Chairman DGCA" → personal_audit, target: "Chairman DGCA India", keywords: ["chairman", "director general", "civil aviation"]
+   - "CEO audit" → personal_audit, target: "CEO audit India", keywords: ["chief executive officer", "managing director"]
+   - "Sundar Pichai" → personal_audit, target: "Sundar Pichai", keywords: ["CEO", "Google", "designation", "contact"]
+   - "Who is the MD of HAL?" → personal_audit, target: "Managing Director HAL India", keywords: ["MD", "managing director", "Hindustan Aeronautics"]
+   - "Director MoD" → personal_audit, target: "Director Ministry of Defence India", keywords: ["director", "MoD", "defense ministry"]
 
-Q1: SINGULARITY TEST — If I searched this, would I expect to find ONE specific entity or a LIST of many?
-   → One specific result = personal_audit
-   → A list of multiple results = lead_scout
+2. "lead_scout" — Discovery search based on INDUSTRY KEYWORDS to find unknown companies and people.
+   USE WHEN: The user gives industry terms, product categories, or sector keywords — NOT a specific person/role.
+   EXAMPLES:
+   - "propeller manufacturers" → lead_scout, target: "propeller manufacturers India", keywords: ["propeller", "manufacturer", "aviation", "aerospace"]
+   - "counter drones" → lead_scout, target: "counter drone companies India", keywords: ["counter drone", "anti-drone", "C-UAS", "defense"]
+   - "EV battery suppliers" → lead_scout, target: "electric vehicle battery manufacturers India", keywords: ["EV battery", "lithium ion", "supplier", "manufacturer"]
+   - "marine engine companies" → lead_scout, target: "marine engine manufacturers India", keywords: ["marine engine", "shipbuilding", "naval", "manufacturer"]
 
-Q2: NOUN TEST — Is the core noun SINGULAR (a person, a title, a named org) or PLURAL/CATEGORICAL (an industry, a type, a class)?
-   → Singular/named = personal_audit
-   → Plural/categorical = lead_scout
+KEY DISTINCTION:
+- If the user mentions a DESIGNATION/TITLE/ROLE (CEO, chairman, director, MD, secretary, head) → personal_audit
+- If the user mentions an INDUSTRY/PRODUCT/SECTOR keyword (propellers, drones, batteries, engines) → lead_scout
+- If unsure, ask: "Is the user looking for a SPECIFIC PERSON or DISCOVERING an INDUSTRY?" 
 
-Q3: IDENTITY TEST — Could I point to this in the real world and say "THAT is the one"? Or is it a description of a group?
-   → Pointable = personal_audit
-   → Group description = lead_scout
-
-Q4: GEOGRAPHY — Does the input lack a country, city, or region? If yes AND the topic involves government/politics/business, append "in India" to the target.
-
-Use ALL 4 questions to reason. Do not rely on keyword matching. Think about the user's INTENT.
+RULES FOR GENERATING JOBS:
+1. Each job's "target" MUST include "India" unless another country is specified.
+2. For lead_scout: target should be the industry/product + "India", keywords should be related industry terms, product names, sector buzzwords.
+3. For personal_audit: target should be the designation + organization + "India", keywords should be alternate titles and related terms.
+4. Generate 1-3 jobs maximum. Each job targets a different angle.
 
 Input: {text[:4000]}"""
 
@@ -356,6 +385,7 @@ Input: {text[:4000]}"""
         return "lead_scout", []
 
 from fastapi import BackgroundTasks
+import threading
 
 def process_input_background(parent_job_id: str, text: str, source_type: str):
     state_manager.set_job_state(parent_job_id, "manual_run", "IN_PROGRESS", source_type, {"step": "analyzing_prompt_with_AI"})
@@ -391,26 +421,28 @@ def process_input_background(parent_job_id: str, text: str, source_type: str):
 
 
 @app.post("/api/start_job/prompt")
-async def start_job_prompt(background_tasks: BackgroundTasks, prompt: str = Form(...)):
+async def start_job_prompt(prompt: str = Form(...)):
     parent_job_id = f"prompt_{uuid.uuid4().hex[:8]}"
     # Register immediately so it shows on dashboard
     state_manager.set_job_state(parent_job_id, "manual_run", "QUEUED", prompt[:50] + "...", {"step": "queued"})
     
-    # Let FastAPI manage the thread lifecycle to prevent zombie processes during shutdown
-    background_tasks.add_task(process_input_background, parent_job_id, prompt, "User Prompt")
+    # Fire and forget — run in a real OS thread so the API returns INSTANTLY
+    thread = threading.Thread(target=process_input_background, args=(parent_job_id, prompt, "User Prompt"), daemon=True)
+    thread.start()
     
     return {"status": "started", "job_id": parent_job_id}
 
 @app.post("/api/start_job/csv")
-async def start_job_csv(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def start_job_csv(file: UploadFile = File(...)):
     contents = await file.read()
     text = contents.decode('utf-8', errors='ignore')
     
     parent_job_id = f"csv_{uuid.uuid4().hex[:8]}"
     state_manager.set_job_state(parent_job_id, "manual_run", "QUEUED", file.filename, {"step": "queued"})
     
-    # Let FastAPI manage the thread lifecycle to prevent zombie processes during shutdown
-    background_tasks.add_task(process_input_background, parent_job_id, text, f"CSV: {file.filename}")
+    # Fire and forget — run in a real OS thread so the API returns INSTANTLY
+    thread = threading.Thread(target=process_input_background, args=(parent_job_id, text, f"CSV: {file.filename}"), daemon=True)
+    thread.start()
     
     return {"status": "started", "job_id": parent_job_id}
 
@@ -444,9 +476,17 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.post("/api/cancel_job/{job_id}")
 async def cancel_job(job_id: str):
     job = state_manager.get_job(job_id)
-    pipeline = job.get("pipeline", "unknown") if job else "unknown"
-    target = job.get("target", "unknown") if job else "unknown"
-    
-    # Setting state to CANCELLED will prevent any further Celery task from executing for this job
-    state_manager.set_job_state(job_id, pipeline, "CANCELLED", target, {"step": "cancelled_by_user"})
-    return {"status": "success"}
+    if job and job["state"] in ["QUEUED", "IN_PROGRESS"]:
+        state_manager.set_job_state(job_id, job["pipeline"], "CANCELLED", job["target"])
+        return {"status": "success"}
+    return {"status": "failed", "reason": "Job not active"}
+
+@app.post("/api/cancel_all")
+async def cancel_all():
+    jobs = state_manager.get_all_jobs()
+    cancelled_count = 0
+    for job_id, job in jobs.items():
+        if job.get("state") in ["QUEUED", "IN_PROGRESS"]:
+            state_manager.set_job_state(job_id, job.get("pipeline", "unknown"), "CANCELLED", job.get("target", "unknown"))
+            cancelled_count += 1
+    return {"status": "success", "cancelled_count": cancelled_count}

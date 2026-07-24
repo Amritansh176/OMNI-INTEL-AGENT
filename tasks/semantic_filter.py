@@ -106,7 +106,10 @@ def score_chunk_relevance(chunk_text, keywords):
     
     # Also boost chunks containing high-value patterns
     high_value_patterns = ['email', 'phone', 'tel:', 'mailto:', 'ceo', 'founder', 
-                           'director', 'manager', 'contact', '@', '.com', 'linkedin']
+                           'director', 'manager', 'contact', '@', '.com', 'linkedin',
+                           'managing director', 'vice president', 'vp', 'chief',
+                           'board of directors', 'leadership', 'team', 'co-founder',
+                           'partner', 'head of', 'president', 'secretary']
     pattern_hits = sum(1 for p in high_value_patterns if p in text_lower)
     pattern_bonus = min(pattern_hits / 5, 0.3)
     

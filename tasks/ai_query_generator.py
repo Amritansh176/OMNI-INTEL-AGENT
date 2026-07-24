@@ -59,12 +59,55 @@ def generate_queries(self, job_id, pipeline, target, keywords=None, depth=0, ori
     keyword_hint = f"\nFocus on: {', '.join(keywords)}" if keywords else ""
     context = "\n".join(context_parts)
 
-    prompt = f"""Generate {Config.AI_QUERY_COUNT} diverse search queries for: "{target}"
+    # Prevent exponential fan-out on mutations (1 -> 5 -> 25 -> 125)
+    query_count = Config.AI_QUERY_COUNT if depth == 0 and pipeline == "lead_scout" else 1
+
+    prompt = f"""You are an elite OSINT analyst for INDIA-FOCUSED intelligence. Generate search queries to find REAL INDIAN PEOPLE (names, designations, contacts) related to: "{target}"
 {keyword_hint}
 {context}
 
-Use different strategies: google_dork (site:, intitle:, filetype:), linkedin, direct_url, news.
-Be specific and creative."""
+GENERATE EXACTLY {query_count} DIVERSE QUERIES using these strategies:
+
+STRATEGY: "google_dork"
+- Use advanced operators: site:, intitle:, inurl:, filetype:, "exact phrase"
+- INDIA-SPECIFIC PATTERNS:
+  * site:linkedin.com/in/ "{target}" India (finds Indian people on LinkedIn)
+  * site:zaubacorp.com "{target}" (Indian company directors from MCA registry)
+  * site:tofler.in "{target}" directors (Indian company leadership)
+  * intitle:"team" OR intitle:"leadership" OR intitle:"about us" "{target}" India
+  * "{target}" India "CEO" OR "founder" OR "director" OR "managing director" email OR contact
+  * filetype:pdf "{target}" India annual report board of directors
+  * site:mca.gov.in "{target}" (Ministry of Corporate Affairs — Indian company filings)
+- NEVER generate generic queries without "India" or operators
+
+STRATEGY: "linkedin"
+- Target LinkedIn specifically:
+  * site:linkedin.com/in/ "{target}" India current position
+  * site:linkedin.com/company/ "{target}" India employees
+
+STRATEGY: "direct_url"
+- Target known INDIAN data-rich sites:
+  * site:zaubacorp.com "{target}" (Indian company directors)
+  * site:tofler.in "{target}" directors
+  * site:theorg.com "{target}" India (org charts)
+  * site:crunchbase.com "{target}" India founder CEO
+
+STRATEGY: "news"
+- Target INDIAN news sources for recent mentions:
+  * site:economictimes.com "{target}" appointed OR named OR joins
+  * site:livemint.com "{target}" CEO OR MD OR director
+  * site:moneycontrol.com "{target}" management team
+  * site:business-standard.com "{target}" leadership
+
+ANTI-PATTERNS (NEVER generate these):
+- Generic one-word queries without operators
+- Queries that would match Wikipedia main page
+- Queries targeting tool/utility websites (calculator, converter, etc.)
+- Queries without the target name in quotes
+- Queries without India context
+
+Each query MUST include "{target}" in quotes and target INDIAN results."""
+
 
     try:
         plan: QueryPlan = query_llm(prompt, QueryPlan, max_retries=2)

@@ -5,9 +5,11 @@ Uses ollama.chat() directly with Pydantic validation for speed.
 """
 import ollama
 import json
+import os
 from config import Config
 from pydantic import BaseModel
 from typing import Type, TypeVar
+from groq import Groq
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -72,8 +74,7 @@ def _build_schema_description(schema: dict, defs: dict = None) -> str:
 
 def query_llm(prompt: str, response_model: Type[T], max_retries: int = 2) -> T:
     """
-    Send a prompt to the local Ollama model and return a validated Pydantic object.
-    Uses ollama.chat(format='json') directly — no instructor/openai overhead.
+    Send a prompt to the LLM (Groq or Ollama) and return a validated Pydantic object.
     """
     # Build a system message that tells the LLM what JSON schema to produce
     schema = response_model.model_json_schema()
@@ -81,18 +82,34 @@ def query_llm(prompt: str, response_model: Type[T], max_retries: int = 2) -> T:
     
     schema_hint = f"You MUST respond with ONLY valid JSON matching this exact schema (use lowercase keys):\n{schema_desc}"
 
+    groq_client = None
+    if Config.USE_GROQ and Config.GROQ_API_KEY:
+        groq_client = Groq(api_key=Config.GROQ_API_KEY)
+
     last_error = None
     for attempt in range(max_retries + 1):
         try:
-            response = ollama.chat(
-                model=Config.OLLAMA_MODEL,
-                messages=[
-                    {'role': 'system', 'content': schema_hint},
-                    {'role': 'user', 'content': prompt}
-                ],
-                format='json'
-            )
-            raw_json = response['message']['content']
+            if groq_client:
+                completion = groq_client.chat.completions.create(
+                    model=Config.GROQ_MODEL,
+                    messages=[
+                        {"role": "system", "content": schema_hint},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1,
+                    response_format={"type": "json_object"}
+                )
+                raw_json = completion.choices[0].message.content
+            else:
+                response = ollama.chat(
+                    model=Config.OLLAMA_MODEL,
+                    messages=[
+                        {'role': 'system', 'content': schema_hint},
+                        {'role': 'user', 'content': prompt}
+                    ],
+                    format='json'
+                )
+                raw_json = response['message']['content']
             
             # Parse and validate through Pydantic
             parsed = json.loads(raw_json)

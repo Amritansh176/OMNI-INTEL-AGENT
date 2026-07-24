@@ -109,7 +109,9 @@ def deep_crawl_top_urls(urls, keywords, max_urls=3):
                     soup = BeautifulSoup(resp.text, 'html.parser')
                     page_links = [a['href'] for a in soup.find_all('a', href=True) 
                                   if any(kw.lower() in a.get('href', '').lower() for kw in 
-                                         (keywords + ['about', 'team', 'contact', 'leadership', 'director', 'management']))]
+                                         (keywords + ['about', 'team', 'contact', 'leadership', 'director', 
+                                          'management', 'founders', 'people', 'board', 'executives', 
+                                          'staff', 'partners', 'who-we-are', 'our-team']))]
                     all_links.extend(page_links[:5])
                     
         except Exception as e:

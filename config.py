@@ -5,6 +5,12 @@ class Config:
     OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
     OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     
+    # Groq API settings
+    USE_GROQ = os.getenv("USE_GROQ", "true").lower() == "true"
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+
+    
     # State tracking Redis DB
     STATE_REDIS_URL = os.getenv("STATE_REDIS_URL", "redis://localhost:6379/1")
 
@@ -24,13 +30,15 @@ class Config:
 
     # --- AI Pipeline Settings ---
     # Quality Scorer: minimum score (0-1) for a lead to pass to handoff
-    QUALITY_THRESHOLD = float(os.getenv("QUALITY_THRESHOLD", "0.4"))
+    QUALITY_THRESHOLD = float(os.getenv("QUALITY_THRESHOLD", "0.5"))
     # Maximum depth for the agentic extraction loop
     MAX_AI_LOOP_DEPTH = int(os.getenv("MAX_AI_LOOP_DEPTH", "3"))
     # Semantic Filter: number of top text chunks to keep per page
-    SEMANTIC_FILTER_TOP_K = int(os.getenv("SEMANTIC_FILTER_TOP_K", "3"))
+    SEMANTIC_FILTER_TOP_K = int(os.getenv("SEMANTIC_FILTER_TOP_K", "5"))
     # Number of diverse queries the AI Query Generator produces per job
-    AI_QUERY_COUNT = int(os.getenv("AI_QUERY_COUNT", "3"))
+    AI_QUERY_COUNT = int(os.getenv("AI_QUERY_COUNT", "5"))
+    # Minimum filled fields per lead (name + at least 1 other field)
+    MIN_LEAD_FIELDS = int(os.getenv("MIN_LEAD_FIELDS", "2"))
 
 os.makedirs(Config.HANDOFF_DIR, exist_ok=True)
 os.makedirs(Config.DLQ_DIR, exist_ok=True)

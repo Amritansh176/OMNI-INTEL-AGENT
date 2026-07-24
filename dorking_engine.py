@@ -119,7 +119,16 @@ class DorkingEngine:
         import random
         time.sleep(random.uniform(2, 5))
         
-        query = f"{target} {' OR '.join(keywords)}" if keywords else target
+        # Build a smarter OSINT-focused query — always India-focused
+        india_ctx = "India" if "india" not in target.lower() else ""
+        # Remove exact quotes around target if it's longer than 2 words to avoid zero results
+        target_query = f'"{target}"' if len(target.split()) <= 2 else target
+        
+        if keywords:
+            kw_str = " ".join(keywords[:3])
+            query = f'{target_query} {india_ctx} {kw_str} CEO OR founder OR director OR contact'
+        else:
+            query = f'{target_query} {india_ctx} leadership OR team OR "about us" OR director'
         
         # Run Google and Yahoo concurrently. If Google blocks us, it returns [] and we still get Yahoo's results!
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -139,6 +148,14 @@ class DorkingEngine:
         # Remove duplicate URLs after cleaning
         all_urls = list(set(all_urls))
         
+        # Filter out known junk/irrelevant URLs
+        junk_url_patterns = [
+            "wikipedia.org/wiki/Main_Page", "rapidtables.com", "calculator.net",
+            "w3schools.com", "example.com", "youtube.com/watch", "amazon.com/dp",
+            "facebook.com/login", "twitter.com/login", "instagram.com/accounts"
+        ]
+        all_urls = [u for u in all_urls if not any(junk in u.lower() for junk in junk_url_patterns)]
+        
         if not all_results:
             return None
             
@@ -149,3 +166,4 @@ class DorkingEngine:
             "results": all_results,
             "interesting_links": all_urls
         }
+

@@ -6,3 +6,6 @@ __pycache__/
 data/db/
 data/handoff/
 data/dlq/
+*.log
+test_*.py
+
